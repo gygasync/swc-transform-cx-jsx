@@ -179,8 +179,8 @@ test!(
     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
     |_| transform_cx(CxOptions { trimWhitespace: true }),
     trims_whitespace_when_flag_is_set,
-    r#"<cx><Container><Container />    </Container></cx>"#,
-    r#"<cx><Container><Container /></Container></cx>"#
+    r#"<cx><Container><Container /> <div>   <cx></cx> <cx>    <div/></cx></div>   </Container></cx>"#,
+    r#"<cx><Container><Container /><div><cx><div/></cx></div></Container></cx>"#
 );
 
 test!(
