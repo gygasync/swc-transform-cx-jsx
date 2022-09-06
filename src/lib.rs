@@ -132,9 +132,7 @@ impl Fold for CxImports {
                     },
                     None => {},
                 }
-                    
-                }
-            }
+            } 
         }
 
 
