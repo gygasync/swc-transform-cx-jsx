@@ -29,6 +29,8 @@ pub fn transform_cx() -> impl Fold {
     folder
 }
 
+// const CX_TAGS: &'static [&'static str; 2] = &["cx", "Cx"];
+
 impl Fold for CxImports {
     fn fold_expr_stmt(&mut self, st: ExprStmt) -> ExprStmt  {
         let expr = st.expr.clone();
@@ -36,7 +38,7 @@ impl Fold for CxImports {
             Expr::JSXElement(jsx_el)=> {
                 match jsx_el.opening.name {
                     JSXElementName::Ident(Ident {sym, ..}) => {
-                        if sym.to_string() == "cx" {
+                        if sym.to_string() == "cx" || sym.to_string() == "Cx" {
                             let null_ident = Ident {span: DUMMY_SP, sym: Default::default(), optional : false};
                             return ExprStmt {span: DUMMY_SP, expr: Box::new(Expr::Lit(Lit::Null(Null {span: DUMMY_SP})))};
                         }
