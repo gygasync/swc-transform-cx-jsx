@@ -64,6 +64,7 @@ pub fn transform_cx() -> impl Fold {
     folder
 }
 
+<<<<<<< HEAD
 
 fn transform_jsx_child_el(el: &JSXElementChild) -> &JSXElementChild {
     match el {
@@ -81,6 +82,9 @@ fn transform_jsx_child_el(el: &JSXElementChild) -> &JSXElementChild {
 
     el
 }
+=======
+// const CX_TAGS: &'static [&'static str; 2] = &["cx", "Cx"];
+>>>>>>> 8c0c470c30798d10d68291823b9bcf45f9768a89
 
 impl Fold for CxImports {
     fn fold_expr_stmt(&mut self, st: ExprStmt) -> ExprStmt  {
@@ -89,9 +93,18 @@ impl Fold for CxImports {
         let expr = st.expr.clone();
         match *expr {
             Expr::JSXElement(jsx_el)=> {
+<<<<<<< HEAD
                     let element = self.fold_jsx_element(*jsx_el);
                     if element != empty_element {
                         result = ExprStmt {span: DUMMY_SP, expr: Box::new(Expr::JSXElement(Box::from(element)))};
+=======
+                match jsx_el.opening.name {
+                    JSXElementName::Ident(Ident {sym, ..}) => {
+                        if sym.to_string() == "cx" || sym.to_string() == "Cx" {
+                            let null_ident = Ident {span: DUMMY_SP, sym: Default::default(), optional : false};
+                            return ExprStmt {span: DUMMY_SP, expr: Box::new(Expr::Lit(Lit::Null(Null {span: DUMMY_SP})))};
+                        }
+>>>>>>> 8c0c470c30798d10d68291823b9bcf45f9768a89
                     }
                 },
                 _ => {}
