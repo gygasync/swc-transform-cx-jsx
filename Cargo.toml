@@ -10,8 +10,13 @@ crate-type = ["cdylib"]
 lto = true
 
 [dependencies]
+dprint-swc-ecma-ast-view = "0.56.0"
 serde = "1"
+swc_atoms = "0.4.10"
+swc_common = "0.27.13"
 swc_core = { version = "0.18.*", features = ["plugin_transform"] }
+swc_ecma_parser = "0.118.6"
+swc_ecma_visit = "0.76.6"
 
 # .cargo/config defines few alias to build plugin.
 # cargo build-wasi generates wasm-wasi32 binary

@@ -1,48 +1,68 @@
+use std::ptr::null;
+
+use swc_common::{DUMMY_SP, util::take::Take};
+use swc_core::{ast::*, common::{EqIgnoreSpan}};
 use swc_core::{
     ast::Program,
+    ast::Ident,
     plugin::{plugin_transform, proxies::TransformPluginProgramMetadata},
     testing_transform::test,
-    visit::{as_folder, FoldWith, VisitMut},
+    visit::{as_folder, FoldWith, VisitMut, VisitMutWith},
 };
+use swc_core::visit::Fold;
 
 pub struct TransformVisitor;
 
-impl VisitMut for TransformVisitor {
-    // Implement necessary visit_mut_* methods for actual custom transform.
-    // A comprehensive list of possible visitor methods can be found here:
-    // https://rustdoc.swc.rs/swc_ecma_visit/trait.VisitMut.html
-}
-
-/// An example plugin function with macro support.
-/// `plugin_transform` macro interop pointers into deserialized structs, as well
-/// as returning ptr back to host.
-///
-/// It is possible to opt out from macro by writing transform fn manually
-/// if plugin need to handle low-level ptr directly via
-/// `__transform_plugin_process_impl(
-///     ast_ptr: *const u8, ast_ptr_len: i32,
-///     unresolved_mark: u32, should_enable_comments_proxy: i32) ->
-///     i32 /*  0 for success, fail otherwise.
-///             Note this is only for internal pointer interop result,
-///             not actual transform result */`
-///
-/// This requires manual handling of serialization / deserialization from ptrs.
-/// Refer swc_plugin_macro to see how does it work internally.
 #[plugin_transform]
 pub fn process_transform(program: Program, _metadata: TransformPluginProgramMetadata) -> Program {
-    program.fold_with(&mut as_folder(TransformVisitor))
+    let program = program.fold_with(&mut transform_cx());
+    program
 }
 
-// An example to test plugin transform.
-// Recommended streategy to test plugin's transform is verify
-// the Visitor's behavior, instead of trying to run `process_transform` with mocks
-// unless explicitly required to do so.
+struct CxImports {
+
+}
+
+pub fn transform_cx() -> impl Fold {
+    let mut folder = CxImports {};
+
+    folder
+}
+
+impl Fold for CxImports {
+    fn fold_expr_stmt(&mut self, st: ExprStmt) -> ExprStmt  {
+        let expr = st.expr.clone();
+        match *expr {
+            Expr::JSXElement(jsx_el)=> {
+                match jsx_el.opening.name {
+                    JSXElementName::Ident(Ident {sym, ..}) => {
+                        if sym.to_string() == "cx" {
+                            let null_ident = Ident {span: DUMMY_SP, sym: Default::default(), optional : false};
+                            return ExprStmt {span: DUMMY_SP, expr: Box::new(Expr::Lit(Lit::Null(Null {span: DUMMY_SP})))};
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        return st;
+    }
+}
+
+
 test!(
-    Default::default(),
-    |_| as_folder(TransformVisitor),
-    boo,
-    // Input codes
-    r#"console.log("transform");"#,
-    // Output codes after transformed with plugin
-    r#"console.log("transform");"#
+    swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
+    |_| transform_cx(),
+    doesnt_touch_unwrapped_code,
+    r#"<div id="123" />"#,
+    r#"<div id="123" />"#
+);
+
+test!(
+    swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
+    |_| transform_cx(),
+    converts_empty_cx_tags_to_null,
+    r#"<cx></cx>"#,
+    r#"null"#
 );
