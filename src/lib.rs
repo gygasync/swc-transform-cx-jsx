@@ -49,38 +49,27 @@ pub struct TransformVisitor;
 
 #[plugin_transform]
 pub fn process_transform(program: Program, _metadata: TransformPluginProgramMetadata) -> Program {
-    let program = program.fold_with(&mut transform_cx());
+    let program = program.fold_with(&mut transform_cx(CxOptions { trimWhitespace: true }));
     program
     // program.fold_with(&mut as_folder(TransformVisitor))
 }
 
-struct CxImports {
-
+pub struct CxOptions {
+    trimWhitespace: bool
 }
 
-pub fn transform_cx() -> impl Fold {
-    let mut folder = CxImports {};
+struct CxImports {
+    options: CxOptions
+}
+
+pub fn transform_cx(options: CxOptions) -> impl Fold {
+    let mut folder = CxImports {
+        options
+    };
 
     folder
 }
 
-
-fn transform_jsx_child_el(el: &JSXElementChild) -> &JSXElementChild {
-    match el {
-        JSXElementChild::JSXElement(jsx_el) => {
-            if (jsx_el.children.len() > 0) {
-                let kids: Vec<JSXElementChild> = vec![];
-                let new_children: Vec<&JSXElementChild> = jsx_el.children.iter()
-                .map(|child| transform_jsx_child_el(child)).collect();
-            } else {
-                return el;
-            }
-        },
-        _ => {}
-    }
-
-    el
-}
 
 impl Fold for CxImports {
     fn fold_expr_stmt(&mut self, st: ExprStmt) -> ExprStmt  {
@@ -98,6 +87,15 @@ impl Fold for CxImports {
             }
 
         return result;
+    }
+
+    fn fold_jsx_text(&mut self, text: JSXText) -> JSXText {
+        println!("Processing JSX TEXT");
+        if self.options.trimWhitespace {
+            return JSXText {span: DUMMY_SP, value: text.value.trim().into(), raw: text.raw.to_string().trim().into() };
+        }
+
+        return text;
     }
 
     fn fold_jsx_element(&mut self, el: JSXElement) -> JSXElement {
@@ -118,6 +116,10 @@ impl Fold for CxImports {
                                 folded_children.push(JSXElementChild::JSXElement(Box::from(fold_result)));
                             }
                         } ,
+                        JSXElementChild::JSXText(el) => {
+                            let fold_result: JSXText = self.fold_jsx_text(el);
+                            folded_children.push(JSXElementChild::JSXText(fold_result));
+                        }
                         _ => folded_children.push(child)
                     }
                 }
@@ -143,7 +145,7 @@ impl Fold for CxImports {
 
 test!(
     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
-    |_| transform_cx(),
+    |_| transform_cx(CxOptions { trimWhitespace: true }),
     doesnt_touch_unwrapped_code,
     r#"<div id="123" />"#,
     r#"<div id="123" />"#
@@ -151,7 +153,7 @@ test!(
 
 test!(
     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
-    |_| transform_cx(),
+    |_| transform_cx(CxOptions { trimWhitespace: true }),
     converts_empty_cx_tags_to_null,
     r#"<cx></cx>"#,
     r#"null"#
@@ -159,7 +161,7 @@ test!(
 
 test!(
     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
-    |_| transform_cx(),
+    |_| transform_cx(CxOptions { trimWhitespace: true }),
     nested_empty_cx_tags_resolve_to_null,
     r#"<div><cx><cx></cx></cx></div>"#,
     r#"<div></div>"#
@@ -167,8 +169,24 @@ test!(
 
 test!(
     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
-    |_| transform_cx(),
+    |_| transform_cx(CxOptions { trimWhitespace: true }),
     nested_non_empty_cx_tags_resolve_to_null,
     r#"<cx><cx><div /></cx></cx>"#,
     r#"<cx><cx><div /></cx></cx>"#
+);
+
+test!(
+    swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
+    |_| transform_cx(CxOptions { trimWhitespace: true }),
+    trims_whitespace_when_flag_is_set,
+    r#"<cx><Container><Container />    </Container></cx>"#,
+    r#"<cx><Container><Container /></Container></cx>"#
+);
+
+test!(
+    swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
+    |_| transform_cx(CxOptions { trimWhitespace: false }),
+    leaves_whitespace_when_flag_is_unset,
+    r#"<cx><Container><Container />    </Container></cx>"#,
+    r#"<cx><Container><Container />    </Container></cx>"#
 );
