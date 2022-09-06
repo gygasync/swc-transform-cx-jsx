@@ -89,10 +89,11 @@ impl Fold for CxImports {
         return result;
     }
 
-    fn fold_jsx_text(&mut self, text: JSXText) -> JSXText {
+    fn fold_jsx_text(&mut self, mut text: JSXText) -> JSXText {
         println!("Processing JSX TEXT");
         if self.options.trimWhitespace {
-            return JSXText {span: DUMMY_SP, value: text.value.trim().into(), raw: text.raw.to_string().trim().into() };
+            text.value = text.value.trim().into();
+            text.raw = text.raw.trim().into();
         }
 
         return text;
@@ -124,7 +125,6 @@ impl Fold for CxImports {
                     }
                 }
 
-                // println!("Children {}");
 
                 // Actual processing
                 if (sym.to_string() == "cx" || sym.to_string() == "Cx") && folded_children.len() == 0 {
