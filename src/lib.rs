@@ -54,9 +54,11 @@ pub fn process_transform(program: Program, _metadata: TransformPluginProgramMeta
     // program.fold_with(&mut as_folder(TransformVisitor))
 }
 
+#[derive(Clone, Copy)]
 pub struct CxOptions {
     trimWhitespace: bool
 }
+
 
 struct CxImports {
     options: CxOptions
@@ -100,20 +102,51 @@ impl Fold for CxImports {
     }
 
     fn fold_jsx_element(&mut self, el: JSXElement) -> JSXElement {
+        let local_options = self.options.clone();
         let empty_element = JSXElement {span: DUMMY_SP, opening: JSXOpeningElement::dummy(), children: vec![], closing: Option::None };
         let children: Vec<JSXElementChild> = el.children.clone();
         let mut folded_children: Vec<JSXElementChild> = vec![];
-        
-        let opening = el.opening.clone();
+
+        let opening: JSXOpeningElement = el.opening.clone();
+        let attrs: Vec<JSXAttrOrSpread> = el.opening.attrs.clone();
+
+        // Examine attributes 
+        for attr in attrs {
+            match attr {
+                JSXAttrOrSpread::SpreadElement(spread_el) => match *spread_el.expr {
+                    Expr::Ident(Ident { sym, .. }) => { }
+                    _ => { }
+                },
+                JSXAttrOrSpread::JSXAttr(JSXAttr { value, .. }) => match value {
+                    Some(jsx_attr) => match jsx_attr {
+                        JSXAttrValue::Lit(lit) => match lit {
+                            Lit::Str(string_lit) => {
+                                let attribute = string_lit.value.to_string();
+                                if attribute == "ws" || attribute == "preserveWhitespace" {
+                                    self.options.trimWhitespace = true;
+                                }
+                            },
+                            _ => {},
+                        }
+                        _ => {},
+                    },
+                    None => {},
+                }
+                    
+                }
+            }
+        }
+
+
         match opening.name {
             JSXElementName::Ident(Ident {sym, ..}) => {
                 println!("{}", sym.to_string());
-                // Pre-processing
+                // Processing children
                 for child in children {
                     match child {
                         JSXElementChild::JSXElement(jsx_child_el) => {
                             let fold_result: JSXElement = self.fold_jsx_element(*jsx_child_el);
-                            if fold_result != empty_element {
+                            if fold_result != empty_element || (sym.to_string() != "cx" && sym.to_string() != "Cx") {
                                 folded_children.push(JSXElementChild::JSXElement(Box::from(fold_result)));
                             }
                         } ,
@@ -123,10 +156,12 @@ impl Fold for CxImports {
                         }
                         _ => folded_children.push(child)
                     }
+
                 }
+                // Restore options
+                self.options = local_options;
 
 
-                // Actual processing
                 if (sym.to_string() == "cx" || sym.to_string() == "Cx") && folded_children.len() == 0 {
                     println!("EMPTY");
                     return empty_element;
@@ -143,50 +178,58 @@ impl Fold for CxImports {
 }
 
 
-test!(
-    swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
-    |_| transform_cx(CxOptions { trimWhitespace: true }),
-    doesnt_touch_unwrapped_code,
-    r#"<div id="123" />"#,
-    r#"<div id="123" />"#
-);
+// test!(
+//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
+//     |_| transform_cx(CxOptions { trimWhitespace: true }),
+//     doesnt_touch_unwrapped_code,
+//     r#"<div id="123" />"#,
+//     r#"<div id="123" />"#
+// );
+
+// test!(
+//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
+//     |_| transform_cx(CxOptions { trimWhitespace: true }),
+//     converts_empty_cx_tags_to_null,
+//     r#"<cx></cx>"#,
+//     r#"null"#
+// );
+
+// test!(
+//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
+//     |_| transform_cx(CxOptions { trimWhitespace: true }),
+//     nested_empty_cx_tags_resolve_to_null,
+//     r#"<div><cx><cx></cx></cx></div>"#,
+//     r#"<div></div>"#
+// );
+
+// test!(
+//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
+//     |_| transform_cx(CxOptions { trimWhitespace: true }),
+//     nested_non_empty_cx_tags_resolve_to_null,
+//     r#"<cx><cx><div /></cx></cx>"#,
+//     r#"<cx><cx><div /></cx></cx>"#
+// );
+
+// test!(
+//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
+//     |_| transform_cx(CxOptions { trimWhitespace: true }),
+//     trims_whitespace_when_flag_is_set,
+//     r#"<cx><Container><Container /> <div>   <cx></cx> <cx>    <div/></cx></div>   </Container></cx>"#,
+//     r#"<cx><Container><Container /><div><cx><div/></cx></div></Container></cx>"#
+// );
+
+// test!(
+//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
+//     |_| transform_cx(CxOptions { trimWhitespace: false }),
+//     leaves_whitespace_when_flag_is_unset,
+//     r#"<cx><Container><Container />    </Container></cx>"#,
+//     r#"<cx><Container><Container />    </Container></cx>"#
+// );
 
 test!(
     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
     |_| transform_cx(CxOptions { trimWhitespace: true }),
-    converts_empty_cx_tags_to_null,
-    r#"<cx></cx>"#,
-    r#"null"#
-);
-
-test!(
-    swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
-    |_| transform_cx(CxOptions { trimWhitespace: true }),
-    nested_empty_cx_tags_resolve_to_null,
-    r#"<div><cx><cx></cx></cx></div>"#,
-    r#"<div></div>"#
-);
-
-test!(
-    swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
-    |_| transform_cx(CxOptions { trimWhitespace: true }),
-    nested_non_empty_cx_tags_resolve_to_null,
-    r#"<cx><cx><div /></cx></cx>"#,
-    r#"<cx><cx><div /></cx></cx>"#
-);
-
-test!(
-    swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
-    |_| transform_cx(CxOptions { trimWhitespace: true }),
-    trims_whitespace_when_flag_is_set,
-    r#"<cx><Container><Container /> <div>   <cx></cx> <cx>    <div/></cx></div>   </Container></cx>"#,
-    r#"<cx><Container><Container /><div><cx><div/></cx></div></Container></cx>"#
-);
-
-test!(
-    swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {jsx: true, ..Default::default()}),
-    |_| transform_cx(CxOptions { trimWhitespace: false }),
-    leaves_whitespace_when_flag_is_unset,
-    r#"<cx><Container><Container />    </Container></cx>"#,
-    r#"<cx><Container><Container />    </Container></cx>"#
+    ws_flag_preserves_whitespace_for_children,
+    r#"<cx><Container ws>    <div>    </div>   </Container><Other>    </Other></cx>"#,
+    r#"<cx><Container><Container ws />    <div>    </div>   </Container><Other></Other></cx>"#
 );
