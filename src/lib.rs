@@ -1,5 +1,6 @@
 use std::borrow::Borrow;
 use std::ptr::null;
+use std::vec;
 
 use swc_common::{util::take::Take, DUMMY_SP};
 use swc_core::visit::Fold;
@@ -196,6 +197,40 @@ impl CxImports {
         }
 
         let dot_index = tag_name.find('.');
+        let mut attrs: Vec<PropOrSpread> = vec![];
+        let tag_first_char = tag_name.get(0..1).unwrap();
+
+        if dot_index.is_some() {
+            // attrs.push(create_key_value_prop(
+            //     String::from("$type"),
+            //     Box::from(Expr::Member(MemberExpr { span: DUMMY_SP,  })),
+            // ))
+        } else if tag_first_char.to_lowercase() == tag_first_char {
+            let html_element = create_key_value_prop(
+                String::from("$type"),
+                Box::from(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: "HtmlElement".into(),
+                    optional: false,
+                })),
+            );
+            let tag = create_key_value_prop(
+                String::from("tag"),
+                Box::from(Expr::Lit(Lit::Str(tag_name.into()))),
+            );
+            attrs.push(html_element);
+            attrs.push(tag);
+        } else {
+            let prop = create_key_value_prop(
+                String::from("$type"),
+                Box::from(Expr::Ident(Ident {
+                    span: DUMMY_SP,
+                    sym: tag_name.into(),
+                    optional: false,
+                })),
+            );
+            attrs.push(prop);
+        }
 
         let mut props: Vec<PropOrSpread> = vec![];
         props.push(create_key_value_prop(
