@@ -165,6 +165,47 @@ impl CxImports {
         }
     }
 
+    fn process_expr_obj_props(&mut self, props: Vec<PropOrSpread>) -> Vec<PropOrSpread> {
+        props
+            .iter()
+            .map(|p| {
+                let tx = match p.borrow() {
+                    PropOrSpread::Spread(spread) => PropOrSpread::Spread(SpreadElement {
+                        dot3_token: (*spread).dot3_token,
+                        expr: Box::new(self.process_element(*spread.expr.clone())),
+                    }),
+                    PropOrSpread::Prop(prop) => match prop.borrow() {
+                        Prop::KeyValue(kv) => {
+                            PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                                key: kv.key.clone(),
+                                value: Box::new(self.process_element(*kv.value.clone())),
+                            })))
+                        }
+                        _ => PropOrSpread::Prop(prop.clone()),
+                    },
+                };
+
+                return tx;
+            })
+            .collect::<Vec<_>>()
+    }
+
+    fn process_expr_array_elems(
+        &mut self,
+        props: Vec<Option<ExprOrSpread>>,
+    ) -> Vec<Option<ExprOrSpread>> {
+        props
+            .iter()
+            .map(|p| match p {
+                None => p.clone(),
+                Some(eos) => Some(ExprOrSpread {
+                    spread: eos.spread,
+                    expr: Box::new(self.process_element(*eos.expr.clone())),
+                }),
+            })
+            .collect::<Vec<_>>()
+    }
+
     fn process_child(
         &mut self,
         child: JSXElementChild,
@@ -197,39 +238,24 @@ impl CxImports {
                 JSXExpr::JSXEmptyExpr(_) => child,
                 JSXExpr::Expr(e) => match *e.clone() {
                     Expr::Object(obj) => {
-                        let transformed_values = obj
-                            .props
-                            .iter()
-                            .map(|p| {
-                                let tx = match p.borrow() {
-                                    PropOrSpread::Spread(spread) => {
-                                        PropOrSpread::Spread(SpreadElement {
-                                            dot3_token: (*spread).dot3_token,
-                                            expr: Box::new(
-                                                self.process_element(*spread.expr.clone()),
-                                            ),
-                                        })
-                                    }
-                                    PropOrSpread::Prop(prop) => match prop.borrow() {
-                                        Prop::KeyValue(kv) => PropOrSpread::Prop(Box::new(
-                                            Prop::KeyValue(KeyValueProp {
-                                                key: kv.key.clone(),
-                                                value: Box::new(
-                                                    self.process_element(*kv.value.clone()),
-                                                ),
-                                            }),
-                                        )),
-                                        _ => PropOrSpread::Prop(prop.clone()),
-                                    },
-                                };
+                        let transformed_values = self.process_expr_obj_props(obj.props);
 
-                                return tx;
-                            })
-                            .collect::<Vec<_>>();
-
-                        todo!("a")
+                        return JSXElementChild::JSXExprContainer(JSXExprContainer {
+                            span: DUMMY_SP,
+                            expr: JSXExpr::Expr(Box::new(Expr::Object(ObjectLit {
+                                span: DUMMY_SP,
+                                props: transformed_values,
+                            }))),
+                        });
                     }
-                    _ => todo!("a"),
+                    Expr::Array(array) => JSXElementChild::JSXExprContainer(JSXExprContainer {
+                        span: DUMMY_SP,
+                        expr: JSXExpr::Expr(Box::new(Expr::Array(ArrayLit {
+                            span: DUMMY_SP,
+                            elems: self.process_expr_array_elems(array.elems),
+                        }))),
+                    }),
+                    _ => child,
                 },
             },
             _ => child,
@@ -417,30 +443,116 @@ impl CxImports {
                     attrs.push(prop);
                 }
 
-                let attrNames: Vec<String> = vec![];
-                let mut spread: Vec<JSXAttrOrSpread> = vec![];
+                let attr_names: Vec<String> = vec![];
+                let mut spread: Vec<Option<ExprOrSpread>> = vec![];
                 let attributes: Vec<JSXAttrOrSpread> = opening.attrs.clone();
 
                 if !opening.attrs.is_empty() {
                     attributes.iter().for_each(|a| match a {
                         JSXAttrOrSpread::SpreadElement(spread_el) => {
-                            spread.push(JSXAttrOrSpread::SpreadElement(spread_el.clone()))
+                            spread.push(Some(ExprOrSpread {
+                                spread: Some(spread_el.dot3_token),
+                                expr: spread_el.expr.clone(),
+                            }))
                         }
-                        JSXAttrOrSpread::JSXAttr(jsx_attr) => {}
+                        JSXAttrOrSpread::JSXAttr(jsx_attr) => {
+                            let processed = self.process_attribute(jsx_attr.clone());
+                            attrs.push(PropOrSpread::Prop(Box::new(processed.clone())));
+                            let attr_name = match processed.borrow() {
+                                Prop::KeyValue(kv) => match &kv.key {
+                                    PropName::Ident(ident) => ident.sym.to_string(),
+                                    PropName::Str(str) => str.value.to_string(),
+                                    PropName::Num(num) => num.value.to_string(),
+                                    PropName::BigInt(big_int) => big_int.value.to_string(),
+                                    _ => panic!("cannot parse attr_names prop keyValue"),
+                                },
+                                _ => panic!("cannot parse attr_names Prop"),
+                            };
+                        }
                     });
                 }
 
-                let mut props: Vec<PropOrSpread> = vec![];
-                props.push(create_key_value_prop(
-                    String::from("$type"),
-                    Box::from(Expr::Object(ObjectLit {
-                        span: DUMMY_SP,
-                        props: vec![],
-                    })),
-                ));
+                if !spread.is_empty() {
+                    attrs.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                        key: PropName::Str("jsxSpread".into()),
+                        value: Box::new(Expr::Array(ArrayLit {
+                            span: DUMMY_SP,
+                            elems: spread,
+                        })),
+                    }))))
+                }
+
+                if !attr_names.is_empty() {
+                    attrs.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                        key: PropName::Str("jsxAttributes".into()),
+                        value: Box::new(Expr::Array(ArrayLit {
+                            span: DUMMY_SP,
+                            elems: attr_names
+                                .iter()
+                                .map(|a| {
+                                    return Some(ExprOrSpread {
+                                        spread: None,
+                                        expr: Box::new(Expr::Lit(Lit::Str((*a.clone()).into()))),
+                                    });
+                                })
+                                .collect::<Vec<_>>(),
+                        })),
+                    }))))
+                }
+
+                if !children.is_empty() {
+                    let mut new_children: Vec<JSXElementChild> = vec![];
+                    children.iter().for_each(|c| {
+                        let child = self.process_child(c.clone(), false);
+                        new_children.push(child);
+                    });
+
+                    attrs.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                        key: PropName::Str("children".into()),
+                        value: Box::new(Expr::Array(ArrayLit {
+                            span: DUMMY_SP,
+                            elems: new_children
+                                .iter()
+                                .map(|nc| {
+                                    Some(ExprOrSpread {
+                                        spread: None,
+                                        expr: Box::new(match nc {
+                                            JSXElementChild::JSXText(text) => {
+                                                let str_lit =
+                                                    Lit::Str(text.value.clone().to_string().into());
+
+                                                Expr::Lit(str_lit)
+                                            }
+                                            JSXElementChild::JSXElement(el) => {
+                                                Expr::JSXElement(el.clone())
+                                            }
+                                            JSXElementChild::JSXSpreadChild(spread) => {
+                                                *spread.expr.clone()
+                                            }
+                                            JSXElementChild::JSXExprContainer(expr) => {
+                                                match expr.expr.borrow() {
+                                                    JSXExpr::JSXEmptyExpr(_) => {
+                                                        Expr::Lit(Lit::Null(Null {
+                                                            span: DUMMY_SP,
+                                                        }))
+                                                    }
+                                                    JSXExpr::Expr(ex) => *ex.clone(),
+                                                }
+                                            }
+                                            JSXElementChild::JSXFragment(frag) => {
+                                                Expr::JSXFragment(frag.clone())
+                                            }
+                                        }),
+                                    })
+                                })
+                                .collect::<Vec<_>>(),
+                        })),
+                    }))))
+                }
+
                 return Expr::Object(ObjectLit {
                     span: DUMMY_SP,
-                    props,
+                    props: attrs,
                 });
             }
             _ => expr,
