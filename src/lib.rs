@@ -3,6 +3,7 @@ use std::ptr::null;
 use std::vec;
 
 use regex::Regex;
+use serde::Serialize;
 use swc_common::{util::take::Take, DUMMY_SP};
 use swc_core::visit::Fold;
 use swc_core::{
@@ -487,7 +488,7 @@ impl CxImports {
                     attrs.push(prop);
                 }
 
-                let attr_names: Vec<String> = vec![];
+                let mut attr_names: Vec<String> = vec![];
                 let mut spread: Vec<Option<ExprOrSpread>> = vec![];
                 let attributes: Vec<JSXAttrOrSpread> = opening.attrs.clone();
 
@@ -512,6 +513,7 @@ impl CxImports {
                                 },
                                 _ => panic!("cannot parse attr_names Prop"),
                             };
+                            attr_names.push(attr_name);
                         }
                     });
                 }
@@ -684,11 +686,30 @@ impl Fold for CxImports {
     //     }
     // }
 
+    // fn fold_export_decl(&mut self, d: ExportDecl) -> ExportDecl {
+    //     println!("HIT");
+
+    //     ExportDecl {
+    //         span: DUMMY_SP,
+    //         decl: self.fold_decl(d.decl),
+    //     }
+    // }
+
+    fn fold_paren_expr(&mut self, p: ParenExpr) -> ParenExpr {
+        println!("Paren expr");
+
+        ParenExpr {
+            span: DUMMY_SP,
+            expr: Box::new(self.fold_expr(*p.expr)),
+        }
+    }
+
     fn fold_expr(&mut self, e: Expr) -> Expr {
         match e.borrow() {
             Expr::JSXElement(jsx_el) => {
                 let name = jsx_el.opening.name.clone();
                 let tag_name = el_name_from_jsx_name(name);
+
                 if tag_name == "cx" {
                     return self.process_element(e);
                 }
@@ -967,6 +988,6 @@ test!(
         trimWhitespace: true
     }),
     ws_flag_should_propagate,
-    r#"const App=(<cx><A><B></B></A><div text-bind="$test" /></cx>);"#,
+    r#"const App=class RadioController extends Controller { init() { var options = Array.from({ length: 20 }).map((v, i) => ({ id: i, text: `Option ${i + 1}` })); this.store.set("$page.options", options); } }; export const App = ( <cx> <A attr> <B></B> </A> <div text-bind="$test" /> </cx> );"#,
     r#"<cx ws>   <cx ws={false}><span></span><cx ws>    <div /> </cx></cx></cx>"#
 );
