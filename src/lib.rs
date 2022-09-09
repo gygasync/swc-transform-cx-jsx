@@ -223,55 +223,62 @@ impl CxImports {
         &mut self,
         child: JSXElementChild,
         preserveWhitespace: bool,
-    ) -> JSXElementChild {
+    ) -> Option<JSXElementChild> {
         return match child.borrow() {
             JSXElementChild::JSXText(jsx_text) => {
                 return if preserveWhitespace {
-                    child
+                    Some(child)
                 } else {
                     let inner_text = jsx_text.value.to_string();
                     let regex = regex::Regex::new(r"\s+").unwrap();
-                    let result = regex.replace_all(inner_text.as_str(), "g").into_owned();
-                    JSXElementChild::JSXText(JSXText {
+                    let result = regex.replace_all(inner_text.as_str(), "").into_owned();
+
+                    if result.is_empty() {
+                        return None;
+                    }
+
+                    Some(JSXElementChild::JSXText(JSXText {
                         span: DUMMY_SP,
                         value: result.clone().into(),
                         raw: result.escape_default().to_string().into(),
-                    })
+                    }))
                 }
             }
             JSXElementChild::JSXElement(el) => {
-                JSXElementChild::JSXExprContainer(JSXExprContainer {
+                Some(JSXElementChild::JSXExprContainer(JSXExprContainer {
                     span: DUMMY_SP,
                     expr: JSXExpr::Expr(Box::from(
                         self.process_element(Expr::JSXElement(el.clone())),
                     )),
-                })
+                }))
             }
             JSXElementChild::JSXExprContainer(expr) => match expr.expr.borrow() {
-                JSXExpr::JSXEmptyExpr(_) => child,
+                JSXExpr::JSXEmptyExpr(_) => Some(child),
                 JSXExpr::Expr(e) => match *e.clone() {
                     Expr::Object(obj) => {
                         let transformed_values = self.process_expr_obj_props(obj.props);
 
-                        return JSXElementChild::JSXExprContainer(JSXExprContainer {
+                        return Some(JSXElementChild::JSXExprContainer(JSXExprContainer {
                             span: DUMMY_SP,
                             expr: JSXExpr::Expr(Box::new(Expr::Object(ObjectLit {
                                 span: DUMMY_SP,
                                 props: transformed_values,
                             }))),
-                        });
+                        }));
                     }
-                    Expr::Array(array) => JSXElementChild::JSXExprContainer(JSXExprContainer {
-                        span: DUMMY_SP,
-                        expr: JSXExpr::Expr(Box::new(Expr::Array(ArrayLit {
+                    Expr::Array(array) => {
+                        Some(JSXElementChild::JSXExprContainer(JSXExprContainer {
                             span: DUMMY_SP,
-                            elems: self.process_expr_array_elems(array.elems),
-                        }))),
-                    }),
-                    _ => child,
+                            expr: JSXExpr::Expr(Box::new(Expr::Array(ArrayLit {
+                                span: DUMMY_SP,
+                                elems: self.process_expr_array_elems(array.elems),
+                            }))),
+                        }))
+                    }
+                    _ => Some(child),
                 },
             },
-            _ => child,
+            _ => Some(child),
         };
     }
 
@@ -355,6 +362,8 @@ impl CxImports {
                             _ => false,
                         })
                         .map(|c| self.process_child(c.clone(), false)) // Revisit all clone invokations, memory and performance improvmenets are hiding here
+                        .filter(|c| c.is_some())
+                        .map(|c| c.unwrap())
                         .collect::<Vec<_>>();
 
                     let transformed_children_expr = transformed_children
@@ -550,7 +559,9 @@ impl CxImports {
                     let mut new_children: Vec<JSXElementChild> = vec![];
                     children.iter().for_each(|c| {
                         let child = self.process_child(c.clone(), false);
-                        new_children.push(child);
+                        if child.is_some() {
+                            new_children.push(child.unwrap());
+                        }
                     });
 
                     attrs.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
