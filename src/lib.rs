@@ -130,8 +130,8 @@ fn get_name_from_jsx_obj(object: JSXObject) -> String {
     }
 }
 
-fn element_name(element: JSXElement) -> String {
-    match element.opening.name {
+fn el_name_from_jsx_name(name: JSXElementName) -> String {
+    match name {
         JSXElementName::Ident(ident) => return ident.sym.to_string(),
         JSXElementName::JSXMemberExpr(expr) => {
             return String::from(format!(
@@ -142,6 +142,10 @@ fn element_name(element: JSXElement) -> String {
         }
         _ => panic!("Could not calculate name."),
     }
+}
+
+fn element_name(element: JSXElement) -> String {
+    el_name_from_jsx_name(element.opening.name)
 }
 
 impl CxImports {
@@ -160,7 +164,15 @@ impl CxImports {
 
     fn process_attribute(&mut self, attr: JSXAttr) -> Prop {
         match attr.value {
-            Some(value) => todo!("asd"),
+            Some(value) => match value {
+                JSXAttrValue::Lit(lit) => self.property(attr.name, Box::new(Expr::Lit(lit))),
+                JSXAttrValue::JSXElement(jsx_el) => {
+                    let processed = self.process_element(Expr::JSXElement(jsx_el));
+
+                    self.property(attr.name, Box::from(processed))
+                }
+                _ => todo!("asd"),
+            },
             None => self.property(attr.name, Box::from(Expr::Lit(Lit::Bool(true.into())))),
         }
     }
@@ -292,15 +304,36 @@ impl CxImports {
     }
 
     fn property(&mut self, name: JSXAttrName, value: Box<Expr>) -> Prop {
+        lazy_static::lazy_static! {
+            static ref dash_regex: Regex = Regex::new(r"(.*)-(bind|tpl|expr)").unwrap();
+        }
+
         match name {
             JSXAttrName::JSXNamespacedName(nm_name) => Prop::KeyValue(KeyValueProp {
                 key: PropName::Ident(nm_name.ns),
                 value: Box::from(self.bind_expr_tpl_object(&nm_name.name.sym.to_string(), value)),
             }),
-            JSXAttrName::Ident(ident) => Prop::KeyValue(KeyValueProp {
-                key: PropName::Ident(ident),
-                value: value,
-            }),
+            JSXAttrName::Ident(ident) => {
+                let symbol = ident.sym.to_string();
+
+                if dash_regex.is_match(symbol.as_str()) {
+                    let regex_matches = &dash_regex.captures(symbol.as_str()).unwrap();
+
+                    let (_, ident) = obj_key_identifier(&regex_matches[1]);
+
+                    if ident.is_some() {
+                        return Prop::KeyValue(KeyValueProp {
+                            key: PropName::Ident(ident.unwrap()),
+                            value: Box::new(self.bind_expr_tpl_object(&regex_matches[2], value)),
+                        });
+                    }
+                }
+
+                return Prop::KeyValue(KeyValueProp {
+                    key: PropName::Ident(ident),
+                    value: value,
+                });
+            }
         }
     }
 
@@ -607,134 +640,205 @@ fn create_jsx_attribute(name: &str, value: Option<JSXAttrValue>) -> JSXAttr {
 }
 
 impl Fold for CxImports {
-    fn fold_expr_stmt(&mut self, st: ExprStmt) -> ExprStmt {
-        let empty_element = JSXElement {
-            span: DUMMY_SP,
-            opening: JSXOpeningElement::dummy(),
-            children: vec![],
-            closing: Option::None,
-        };
-        let mut result: ExprStmt = ExprStmt {
-            span: DUMMY_SP,
-            expr: Box::new(Expr::Lit(Lit::Null(Null { span: DUMMY_SP }))),
-        };
-        let expr = st.expr.clone();
-        match *expr {
+    // fn fold_decl(&mut self, d: Decl) -> Decl {
+    //     match d.borrow() {
+    //         Decl::Var(var) => {
+    //             let mut decls: Vec<VarDeclarator> = vec![];
+    //             let mut has_cx: bool = false;
+    //             var.decls.iter().for_each(|d| {
+    //                 if d.init.is_some() {
+    //                     let init = d.init.clone().unwrap();
+    //                     match *init {
+    //                         Expr::JSXElement(jsx_el) => {
+    //                             let name = jsx_el.opening.name.clone();
+    //                             let tag_name = el_name_from_jsx(name);
+    //                             println!("WOOP");
+    //                             if tag_name == "cx" {
+    //                                 has_cx = true;
+    //                                 decls.push(VarDeclarator {
+    //                                     span: DUMMY_SP,
+    //                                     name: d.name.clone(),
+    //                                     init: Some(Box::new(
+    //                                         self.process_element(Expr::JSXElement(jsx_el.clone())),
+    //                                     )),
+    //                                     definite: d.definite,
+    //                                 })
+    //                             }
+    //                         }
+    //                         _ => decls.push(d.clone()),
+    //                     }
+    //                 }
+    //             });
+    //             if has_cx {
+    //                 return Decl::Var(VarDecl {
+    //                     span: DUMMY_SP,
+    //                     kind: var.kind,
+    //                     declare: var.declare,
+    //                     decls,
+    //                 });
+    //             }
+
+    //             return d;
+    //         }
+    //         _ => d,
+    //     }
+    // }
+
+    fn fold_expr(&mut self, e: Expr) -> Expr {
+        match e.borrow() {
             Expr::JSXElement(jsx_el) => {
-                match jsx_el.clone().opening.name {
-                    JSXElementName::Ident(ident) => {
-                        if ident.sym.to_string() == "cx" {
-                            result = ExprStmt {
-                                span: DUMMY_SP,
-                                expr: Box::new(
-                                    self.process_element(Expr::JSXElement(jsx_el.clone())),
-                                ),
-                            };
+                let name = jsx_el.opening.name.clone();
+                let tag_name = el_name_from_jsx_name(name);
+                if tag_name == "cx" {
+                    return self.process_element(e);
+                }
 
-                            return result;
-                        }
-                    }
-                    _ => {}
-                }
-                let element = self.fold_jsx_element(*jsx_el.clone());
-                if element != empty_element {
-                    result = ExprStmt {
-                        span: DUMMY_SP,
-                        expr: Box::new(Expr::JSXElement(Box::from(element))),
-                    };
-                }
+                return e;
             }
-            _ => {}
-        }
+            Expr::Paren(parenthesis_expr) => match parenthesis_expr.expr.borrow() {
+                Expr::JSXElement(jsx_el) => {
+                    let name = jsx_el.opening.name.clone();
+                    let tag_name = el_name_from_jsx_name(name);
+                    if tag_name == "cx" {
+                        return self.process_element(*parenthesis_expr.expr.clone());
+                    }
 
-        return result;
+                    return e;
+                }
+                _ => e,
+            },
+            _ => e,
+        }
     }
 
-    fn fold_jsx_text(&mut self, mut text: JSXText) -> JSXText {
-        if self.options.trimWhitespace {
-            text.value = text.value.trim().into();
-            text.raw = text.raw.trim().into();
-        }
+    // fn fold_expr_stmt(&mut self, st: ExprStmt) -> ExprStmt {
+    //     let empty_element = JSXElement {
+    //         span: DUMMY_SP,
+    //         opening: JSXOpeningElement::dummy(),
+    //         children: vec![],
+    //         closing: Option::None,
+    //     };
+    //     let mut result: ExprStmt = ExprStmt {
+    //         span: DUMMY_SP,
+    //         expr: Box::new(Expr::Lit(Lit::Null(Null { span: DUMMY_SP }))),
+    //     };
+    //     let expr = st.expr.clone();
+    //     match *expr {
+    //         Expr::JSXElement(jsx_el) => {
+    //             match jsx_el.clone().opening.name {
+    //                 JSXElementName::Ident(ident) => {
+    //                     if ident.sym.to_string() == "cx" {
+    //                         result = ExprStmt {
+    //                             span: DUMMY_SP,
+    //                             expr: Box::new(
+    //                                 self.process_element(Expr::JSXElement(jsx_el.clone())),
+    //                             ),
+    //                         };
 
-        return text;
-    }
+    //                         return result;
+    //                     }
+    //                 }
+    //                 _ => {}
+    //             }
+    //             let element = self.fold_jsx_element(*jsx_el.clone());
+    //             if element != empty_element {
+    //                 result = ExprStmt {
+    //                     span: DUMMY_SP,
+    //                     expr: Box::new(Expr::JSXElement(Box::from(element))),
+    //                 };
+    //             }
+    //         }
+    //         _ => {}
+    //     }
 
-    fn fold_jsx_element(&mut self, el: JSXElement) -> JSXElement {
-        let local_options = self.options.clone();
-        let empty_element = JSXElement {
-            span: DUMMY_SP,
-            opening: JSXOpeningElement::dummy(),
-            children: vec![],
-            closing: Option::None,
-        };
-        let children: Vec<JSXElementChild> = el.children.clone();
-        let mut folded_children: Vec<JSXElementChild> = vec![];
+    //     return result;
+    // }
 
-        let opening: JSXOpeningElement = el.opening.clone();
-        let attrs: Vec<JSXAttrOrSpread> = el.opening.attrs.clone();
+    // fn fold_jsx_text(&mut self, mut text: JSXText) -> JSXText {
+    //     if self.options.trimWhitespace {
+    //         text.value = text.value.trim().into();
+    //         text.raw = text.raw.trim().into();
+    //     }
 
-        // Examine attributes
-        for attr in attrs {
-            match attr {
-                JSXAttrOrSpread::SpreadElement(spread_el) => match *spread_el.expr {
-                    Expr::Ident(Ident { sym, .. }) => {}
-                    _ => {}
-                },
-                JSXAttrOrSpread::JSXAttr(jsx_attr) => match jsx_attr.name {
-                    JSXAttrName::Ident(Ident { sym, .. }) => {
-                        let attribute = sym.to_string();
-                        if attribute == "ws" || attribute == "preserveWhitespace" {
-                            let should_preserve_whitespace =
-                                eval_bool_attribute_option(jsx_attr.value);
-                            self.options.trimWhitespace = !should_preserve_whitespace;
-                        }
-                    }
-                    _ => {}
-                },
-            }
-        }
+    //     return text;
+    // }
 
-        match opening.name {
-            JSXElementName::Ident(Ident { sym, .. }) => {
-                println!("{}", sym.to_string());
-                // Processing children
-                for child in children {
-                    match child {
-                        JSXElementChild::JSXElement(jsx_child_el) => {
-                            let fold_result: JSXElement = self.fold_jsx_element(*jsx_child_el);
-                            if fold_result != empty_element {
-                                folded_children
-                                    .push(JSXElementChild::JSXElement(Box::from(fold_result)));
-                            }
-                        }
-                        JSXElementChild::JSXText(el) => {
-                            let fold_result: JSXText = self.fold_jsx_text(el);
-                            folded_children.push(JSXElementChild::JSXText(fold_result));
-                        }
-                        _ => folded_children.push(child),
-                    }
-                }
-                // Restore options
-                self.options = local_options;
+    // fn fold_jsx_element(&mut self, el: JSXElement) -> JSXElement {
+    //     let local_options = self.options.clone();
+    //     let empty_element = JSXElement {
+    //         span: DUMMY_SP,
+    //         opening: JSXOpeningElement::dummy(),
+    //         children: vec![],
+    //         closing: Option::None,
+    //     };
+    //     let children: Vec<JSXElementChild> = el.children.clone();
+    //     let mut folded_children: Vec<JSXElementChild> = vec![];
 
-                if (sym.to_string() == "cx" || sym.to_string() == "Cx")
-                    && folded_children.len() == 0
-                {
-                    return empty_element;
-                }
+    //     let opening: JSXOpeningElement = el.opening.clone();
+    //     let attrs: Vec<JSXAttrOrSpread> = el.opening.attrs.clone();
 
-                return JSXElement {
-                    span: el.span,
-                    opening: el.opening,
-                    closing: el.closing,
-                    children: folded_children,
-                };
-            }
-            _ => {}
-        }
+    //     // Examine attributes
+    //     for attr in attrs {
+    //         match attr {
+    //             JSXAttrOrSpread::SpreadElement(spread_el) => match *spread_el.expr {
+    //                 Expr::Ident(Ident { sym, .. }) => {}
+    //                 _ => {}
+    //             },
+    //             JSXAttrOrSpread::JSXAttr(jsx_attr) => match jsx_attr.name {
+    //                 JSXAttrName::Ident(Ident { sym, .. }) => {
+    //                     let attribute = sym.to_string();
+    //                     if attribute == "ws" || attribute == "preserveWhitespace" {
+    //                         let should_preserve_whitespace =
+    //                             eval_bool_attribute_option(jsx_attr.value);
+    //                         self.options.trimWhitespace = !should_preserve_whitespace;
+    //                     }
+    //                 }
+    //                 _ => {}
+    //             },
+    //         }
+    //     }
 
-        return el;
-    }
+    //     match opening.name {
+    //         JSXElementName::Ident(Ident { sym, .. }) => {
+    //             println!("{}", sym.to_string());
+    //             // Processing children
+    //             for child in children {
+    //                 match child {
+    //                     JSXElementChild::JSXElement(jsx_child_el) => {
+    //                         let fold_result: JSXElement = self.fold_jsx_element(*jsx_child_el);
+    //                         if fold_result != empty_element {
+    //                             folded_children
+    //                                 .push(JSXElementChild::JSXElement(Box::from(fold_result)));
+    //                         }
+    //                     }
+    //                     JSXElementChild::JSXText(el) => {
+    //                         let fold_result: JSXText = self.fold_jsx_text(el);
+    //                         folded_children.push(JSXElementChild::JSXText(fold_result));
+    //                     }
+    //                     _ => folded_children.push(child),
+    //                 }
+    //             }
+    //             // Restore options
+    //             self.options = local_options;
+
+    //             if (sym.to_string() == "cx" || sym.to_string() == "Cx")
+    //                 && folded_children.len() == 0
+    //             {
+    //                 return empty_element;
+    //             }
+
+    //             return JSXElement {
+    //                 span: el.span,
+    //                 opening: el.opening,
+    //                 closing: el.closing,
+    //                 children: folded_children,
+    //             };
+    //         }
+    //         _ => {}
+    //     }
+
+    //     return el;
+    // }
 }
 
 // test!(
@@ -828,18 +932,31 @@ impl Fold for CxImports {
 //     r#"<cx><Container><Container />    </Container></cx>"#
 // );
 
-test!(
-    swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
-        jsx: true,
-        ..Default::default()
-    }),
-    |_| transform_cx(CxOptions {
-        trimWhitespace: true
-    }),
-    ws_flag_preserves_whitespace_for_children,
-    r#"<cx><Container ws>    <div>    </div>   </Container><Other>    </Other></cx>"#,
-    r#"<cx><Container ws>    <div>    </div>   </Container><Other></Other></cx>"#
-);
+// test!(
+//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
+//         jsx: true,
+//         ..Default::default()
+//     }),
+//     |_| transform_cx(CxOptions {
+//         trimWhitespace: true
+//     }),
+//     ws_flag_preserves_whitespace_for_children,
+//     r#"<cx><Container ws>    <div>    </div>   </Container><Other>    </Other></cx>"#,
+//     r#"<cx><Container ws>    <div>    </div>   </Container><Other></Other></cx>"#
+// );
+
+// test!(
+//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
+//         jsx: true,
+//         ..Default::default()
+//     }),
+//     |_| transform_cx(CxOptions {
+//         trimWhitespace: true
+//     }),
+//     ws_flag_should_propagate,
+//     r#"<cx ws>   <cx ws={false}>  <span>    </span>  <cx ws>    <div /> </cx></cx></cx>"#,
+//     r#"<cx ws>   <cx ws={false}><span></span><cx ws>    <div /> </cx></cx></cx>"#
+// );
 
 test!(
     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
@@ -850,6 +967,6 @@ test!(
         trimWhitespace: true
     }),
     ws_flag_should_propagate,
-    r#"<cx ws>   <cx ws={false}>  <span>    </span>  <cx ws>    <div /> </cx></cx></cx>"#,
+    r#"const App=(<cx><A><B></B></A><div text-bind="$test" /></cx>);"#,
     r#"<cx ws>   <cx ws={false}><span></span><cx ws>    <div /> </cx></cx></cx>"#
 );
