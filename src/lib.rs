@@ -1,10 +1,13 @@
 use std::borrow::Borrow;
+use std::path::PathBuf;
 use std::ptr::null;
 use std::vec;
 
 use regex::Regex;
 use serde::Serialize;
+use swc_common::chain;
 use swc_common::{util::take::Take, DUMMY_SP};
+use swc_core::testing_transform::test_fixture;
 use swc_core::visit::Fold;
 use swc_core::{
     ast::Ident,
@@ -14,6 +17,7 @@ use swc_core::{
     visit::{as_folder, FoldWith, VisitMut, VisitMutWith},
 };
 use swc_core::{ast::*, common::EqIgnoreSpan};
+use swc_ecma_parser::{EsConfig, Syntax};
 
 fn transform_cx_element(el: Box<JSXElement>) -> Expr {
     cx_process_element(Expr::JSXElement(el))
@@ -96,8 +100,8 @@ fn cx_process_element(expr: Expr) -> Expr {
                     return Expr::JSXElement(Box::from(element));
                 }
 
-                if !transformed_children.is_empty() {
-                    return transformed_children_array_expr;
+                if transformed_children.is_empty() {
+                    return Expr::Lit(Lit::Null(Null { span: DUMMY_SP }));
                 }
 
                 if transformed_children.len() == 1 {
@@ -106,9 +110,19 @@ fn cx_process_element(expr: Expr) -> Expr {
                         JSXElementChild::JSXElement(el) => Expr::JSXElement(el),
                         JSXElementChild::JSXFragment(frag) => Expr::JSXFragment(frag),
                         JSXElementChild::JSXText(text) => Expr::Lit(Lit::from(text)),
+                        JSXElementChild::JSXExprContainer(expr_container) => {
+                            match expr_container.expr {
+                                JSXExpr::JSXEmptyExpr(_) => {
+                                    Expr::Lit(Lit::Null(Null { span: DUMMY_SP }))
+                                }
+                                JSXExpr::Expr(expr) => *expr,
+                            }
+                        }
                         _ => panic!("Failed transforming only child"),
                     };
                 }
+
+                return transformed_children_array_expr;
             }
 
             let dot_index = tag_name.find('.');
@@ -578,136 +592,22 @@ fn create_jsx_attribute(name: &str, value: Option<JSXAttrValue>) -> JSXAttr {
 //         jsx: true,
 //         ..Default::default()
 //     }),
-//     |_| transform_cx(CxOptions {
-//         trimWhitespace: true
-//     }),
-//     doesnt_touch_unwrapped_code,
-//     r#"<div id="123" />"#,
-//     r#"<div id="123" />"#
-// );
-
-// test!(
-//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
-//         jsx: true,
-//         ..Default::default()
-//     }),
-//     |_| transform_cx(CxOptions {
-//         trimWhitespace: true
-//     }),
-//     converts_empty_cx_tags_to_null,
-//     r#"<cx></cx>"#,
-//     r#"null"#
-// );
-
-// test!(
-//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
-//         jsx: true,
-//         ..Default::default()
-//     }),
-//     |_| transform_cx(CxOptions {
-//         trimWhitespace: true
-//     }),
-//     cx_react_tag_should_remain,
-//     r#"<Cx></Cx>"#,
-//     r#"<Cx></Cx>"#
-// );
-
-// test!(
-//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
-//         jsx: true,
-//         ..Default::default()
-//     }),
-//     |_| transform_cx(CxOptions {
-//         trimWhitespace: true
-//     }),
-//     nested_empty_cx_tags_resolve_to_null,
-//     r#"<div><cx><cx></cx></cx></div>"#,
-//     r#"<div></div>"#
-// );
-
-// test!(
-//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
-//         jsx: true,
-//         ..Default::default()
-//     }),
-//     |_| transform_cx(CxOptions {
-//         trimWhitespace: true
-//     }),
-//     nested_non_empty_cx_tags_resolve_to_null,
-//     r#"<cx><cx><div /></cx></cx>"#,
-//     r#"<cx><cx><div /></cx></cx>"#
-// );
-
-// test!(
-//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
-//         jsx: true,
-//         ..Default::default()
-//     }),
-//     |_| transform_cx(CxOptions {
-//         trimWhitespace: true
-//     }),
-//     trims_whitespace_when_flag_is_set,
-//     r#"<cx><Container><Container /> <div>   <cx></cx> <cx>    <div /></cx></div>   </Container></cx>"#,
-//     r#"<cx><Container><Container /><div><cx><div/></cx></div></Container></cx>"#
-// );
-
-// test!(
-//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
-//         jsx: true,
-//         ..Default::default()
-//     }),
-//     |_| transform_cx(CxOptions {
-//         trimWhitespace: false
-//     }),
-//     leaves_whitespace_when_flag_is_unset,
-//     r#"<cx><Container><Container />    </Container></cx>"#,
-//     r#"<cx><Container><Container />    </Container></cx>"#
-// );
-
-test!(
-    swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
-        jsx: true,
-        ..Default::default()
-    }),
-    |_| as_folder(TransformVisitor),
-    ws_flag_preserves_whitespace_for_children,
-    r#"<cx><Container ws>    <div>    </div>   </Container><Other>    </Other></cx>"#,
-    r#"<cx><Container ws>    <div>    </div>   </Container><Other></Other></cx>"#
-);
-
-// test!(
-//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
-//         jsx: true,
-//         ..Default::default()
-//     }),
-//     |_| transform_cx(CxOptions {
-//         trimWhitespace: true
-//     }),
-//     ws_flag_should_propagate,
-//     r#"<cx ws>   <cx ws={false}>  <span>    </span>  <cx ws>    <div /> </cx></cx></cx>"#,
-//     r#"<cx ws>   <cx ws={false}><span></span><cx ws>    <div /> </cx></cx></cx>"#
-// );
-
-// test!(
-//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
-//         jsx: true,
-//         ..Default::default()
-//     }),
-//     |_| transform_cx(CxOptions {
-//         trimWhitespace: true
-//     }),
-//     ws_flag_should_propagate,
-//     r#"export function editBA(service, { subnets, sites, gateways, vpn, cpes, editable }) { return new Promise((resolve) => { let store = new Store({ }); let widget = Window.create({ items: ( <cx> <A /> </cx> ), }); widget.open(store); }); } "#,
-//     r#"<cx ws>   <cx ws={false}><span></span><cx ws>    <div /> </cx></cx></cx>"#
-// );
-
-// test!(
-//     swc_ecma_parser::Syntax::Es(swc_ecma_parser::EsConfig {
-//         jsx: true,
-//         ..Default::default()
-//     }),
 //     |_| as_folder(TransformVisitor),
-//     ws_flag_should_propagate,
-//     r#"export function editBA(service, { subnets, sites, gateways, vpn, cpes, editable }) { return new Promise((resolve) => { let store = new Store({ }); let widget = Window.create({ items: ( <cx> <A /> </cx> ), }); widget.open(store); }); } "#,
-//     r#"<cx ws>   <cx ws={false}><span></span><cx ws>    <div /> </cx></cx></cx>"#
+//     ws_flag_preserves_whitespace_for_children,
+//     r#"<cx></cx>"#,
+//     r#"null;"#
 // );
+
+#[testing::fixture("tests/**/input.js")]
+fn exec(input: PathBuf) {
+    let output = input.with_file_name("output.js");
+    test_fixture(
+        Syntax::Es(EsConfig {
+            jsx: true,
+            ..Default::default()
+        }),
+        &|_| chain!(as_folder(TransformVisitor), as_folder(TransformVisitor)), // This works but i do not know how and why
+        &input,
+        &output,
+    )
+}
