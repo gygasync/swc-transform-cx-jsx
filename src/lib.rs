@@ -201,10 +201,12 @@ fn cx_process_element(expr: Expr) -> Expr {
 
             if !opening.attrs.is_empty() {
                 attributes.iter().for_each(|a| match a {
-                    JSXAttrOrSpread::SpreadElement(spread_el) => spread.push(Some(ExprOrSpread {
-                        spread: Some(spread_el.dot3_token),
-                        expr: Box::new(cx_process_element(*spread_el.expr.clone())),
-                    })),
+                    JSXAttrOrSpread::SpreadElement(spread_el) => {
+                        spread.push(Some(ExprOrSpread {
+                            spread: Some(spread_el.dot3_token),
+                            expr: Box::new(cx_process_element(*spread_el.expr.clone())),
+                        }));
+                    }
                     JSXAttrOrSpread::JSXAttr(jsx_attr) => {
                         let processed = cx_process_attribute(jsx_attr.clone());
                         attrs.push(PropOrSpread::Prop(Box::new(processed.clone())));
@@ -318,18 +320,28 @@ fn cx_process_element(expr: Expr) -> Expr {
                 },
                 PropOrSpread::Spread(spread) => {}
             });
+
             return Expr::Object(ObjectLit {
                 span: DUMMY_SP,
                 props: attrs,
             });
         }
-        // Expr::Arrow(arrow_fn) => {
-        //     // arrow_fn.
-        //     let res = Expr::Fn(FnExpr {
-        //         ident: Some(arrow_fn.)
-        //     })
-        //     return expr;
-        // }
+        Expr::Array(array) => {
+            let mut elems: Vec<Option<ExprOrSpread>> = vec![];
+
+            array.elems.iter().for_each(|e| match e.borrow() {
+                Some(expr_or_spread) => elems.push(Some(ExprOrSpread {
+                    spread: None,
+                    expr: Box::new(cx_process_element(*expr_or_spread.expr.clone())),
+                })),
+                None => {}
+            });
+
+            return Expr::Array(ArrayLit {
+                span: DUMMY_SP,
+                elems,
+            });
+        }
         _ => expr,
     };
 }
