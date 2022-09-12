@@ -23,6 +23,16 @@ fn transform_cx_element(el: Box<JSXElement>) -> Expr {
     cx_process_element(Expr::JSXElement(el))
 }
 
+fn get_prop_name(kv_prop: &KeyValueProp) -> String {
+    match &kv_prop.key {
+        PropName::Ident(ident) => ident.sym.to_string(),
+        PropName::Str(str) => str.value.to_string(),
+        PropName::Num(num) => num.value.to_string(),
+        PropName::BigInt(big_int) => big_int.value.to_string(),
+        _ => panic!("cannot parse attr_names prop keyValue"),
+    }
+}
+
 fn cx_process_element(expr: Expr) -> Expr {
     return match expr {
         Expr::JSXElement(el) => {
@@ -55,7 +65,7 @@ fn cx_process_element(expr: Expr) -> Expr {
                         ))),
                         JSXElementChild::JSXExprContainer(expr) => {
                             Some(ExprOrSpread::from(match expr.expr.clone() {
-                                JSXExpr::Expr(expr) => *expr,
+                                JSXExpr::Expr(expr) => cx_process_element(*expr),
                                 JSXExpr::JSXEmptyExpr(_) => {
                                     Expr::Lit(Lit::Null(Null { span: DUMMY_SP }))
                                 }
@@ -193,21 +203,33 @@ fn cx_process_element(expr: Expr) -> Expr {
                 attributes.iter().for_each(|a| match a {
                     JSXAttrOrSpread::SpreadElement(spread_el) => spread.push(Some(ExprOrSpread {
                         spread: Some(spread_el.dot3_token),
-                        expr: spread_el.expr.clone(),
+                        expr: Box::new(cx_process_element(*spread_el.expr.clone())),
                     })),
                     JSXAttrOrSpread::JSXAttr(jsx_attr) => {
                         let processed = cx_process_attribute(jsx_attr.clone());
-                        attrs.push(PropOrSpread::Prop(Box::new(processed.clone())));
                         let attr_name = match processed.borrow() {
-                            Prop::KeyValue(kv) => match &kv.key {
-                                PropName::Ident(ident) => ident.sym.to_string(),
-                                PropName::Str(str) => str.value.to_string(),
-                                PropName::Num(num) => num.value.to_string(),
-                                PropName::BigInt(big_int) => big_int.value.to_string(),
-                                _ => panic!("cannot parse attr_names prop keyValue"),
-                            },
+                            Prop::KeyValue(kv) => get_prop_name(kv),
                             _ => panic!("cannot parse attr_names Prop"),
                         };
+
+                        match jsx_attr.value.borrow() {
+                            Some(value) => match value {
+                                JSXAttrValue::JSXExprContainer(expr_container) => {
+                                    match expr_container.expr.borrow() {
+                                        JSXExpr::Expr(expr) => attrs.push(PropOrSpread::Prop(
+                                            Box::new(Prop::KeyValue(KeyValueProp {
+                                                key: PropName::Str(attr_name.clone().into()),
+                                                value: Box::new(cx_process_element(*expr.clone())),
+                                            })),
+                                        )),
+                                        _ => {}
+                                    }
+                                }
+                                _ => attrs.push(PropOrSpread::Prop(Box::new(processed.clone()))),
+                            },
+                            None => attrs.push(PropOrSpread::Prop(Box::new(processed.clone()))),
+                        }
+
                         attr_names.push(attr_name);
                     }
                 });
@@ -291,6 +313,28 @@ fn cx_process_element(expr: Expr) -> Expr {
                 }))))
             }
 
+            return Expr::Object(ObjectLit {
+                span: DUMMY_SP,
+                props: attrs,
+            });
+        }
+        Expr::Object(obj) => {
+            let mut attrs: Vec<PropOrSpread> = vec![];
+
+            obj.props.iter().for_each(|o| match o.borrow() {
+                PropOrSpread::Prop(prop) => match prop.borrow() {
+                    Prop::KeyValue(key_value) => {
+                        let prop_name = get_prop_name(key_value);
+                        let value = cx_process_element(*key_value.value.clone());
+                        attrs.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                            key: PropName::Str(prop_name.into()),
+                            value: Box::new(value),
+                        }))))
+                    }
+                    _ => todo!("Only keyvalue is implemented for obj props"),
+                },
+                PropOrSpread::Spread(spread) => {}
+            });
             return Expr::Object(ObjectLit {
                 span: DUMMY_SP,
                 props: attrs,
@@ -402,6 +446,13 @@ fn cx_process_attribute(attr: JSXAttr) -> Prop {
 
                 cx_property(attr.name, Box::from(processed))
             }
+            JSXAttrValue::JSXExprContainer(expr) => match expr.expr {
+                JSXExpr::JSXEmptyExpr(_) => todo!("Exmpty prop expression"),
+                JSXExpr::Expr(e) => {
+                    let processed = cx_process_element(*e);
+                    return cx_property(attr.name, Box::from(processed));
+                }
+            },
             _ => todo!("asd"),
         },
         None => cx_property(attr.name, Box::from(Expr::Lit(Lit::Bool(true.into())))),
