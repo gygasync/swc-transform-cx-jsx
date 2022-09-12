@@ -207,28 +207,11 @@ fn cx_process_element(expr: Expr) -> Expr {
                     })),
                     JSXAttrOrSpread::JSXAttr(jsx_attr) => {
                         let processed = cx_process_attribute(jsx_attr.clone());
+                        attrs.push(PropOrSpread::Prop(Box::new(processed.clone())));
                         let attr_name = match processed.borrow() {
                             Prop::KeyValue(kv) => get_prop_name(kv),
                             _ => panic!("cannot parse attr_names Prop"),
                         };
-
-                        match jsx_attr.value.borrow() {
-                            Some(value) => match value {
-                                JSXAttrValue::JSXExprContainer(expr_container) => {
-                                    match expr_container.expr.borrow() {
-                                        JSXExpr::Expr(expr) => attrs.push(PropOrSpread::Prop(
-                                            Box::new(Prop::KeyValue(KeyValueProp {
-                                                key: PropName::Str(attr_name.clone().into()),
-                                                value: Box::new(cx_process_element(*expr.clone())),
-                                            })),
-                                        )),
-                                        _ => {}
-                                    }
-                                }
-                                _ => attrs.push(PropOrSpread::Prop(Box::new(processed.clone()))),
-                            },
-                            None => attrs.push(PropOrSpread::Prop(Box::new(processed.clone()))),
-                        }
 
                         attr_names.push(attr_name);
                     }
