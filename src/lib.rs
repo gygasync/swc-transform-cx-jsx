@@ -323,6 +323,13 @@ fn cx_process_element(expr: Expr) -> Expr {
                 props: attrs,
             });
         }
+        // Expr::Arrow(arrow_fn) => {
+        //     // arrow_fn.
+        //     let res = Expr::Fn(FnExpr {
+        //         ident: Some(arrow_fn.)
+        //     })
+        //     return expr;
+        // }
         _ => expr,
     };
 }
@@ -432,7 +439,56 @@ fn cx_process_attribute(attr: JSXAttr) -> Prop {
             JSXAttrValue::JSXExprContainer(expr) => match expr.expr {
                 JSXExpr::JSXEmptyExpr(_) => todo!("Exmpty prop expression"),
                 JSXExpr::Expr(e) => {
-                    let processed = cx_process_element(*e);
+                    let processed = match e.borrow() {
+                        // Arrow fn has to be handled here instead of cx_process_element, the ArrowFn does not contain an identifier
+                        // But the FuncExpr requires an identifier which will be generated from the attribute name
+                        Expr::Arrow(arrow_fn) => {
+                            let fn_ident = match attr.name.borrow() {
+                                JSXAttrName::Ident(ident) => ident,
+                                JSXAttrName::JSXNamespacedName(ns_name) => {
+                                    todo!("JSX NAMESPACED NAME AS ARROWFN IDENTIFIER")
+                                }
+                            };
+
+                            let transformed_params = arrow_fn
+                                .params
+                                .clone()
+                                .iter()
+                                .map(|p| Param {
+                                    span: DUMMY_SP,
+                                    pat: p.clone(),
+                                    decorators: vec![],
+                                })
+                                .collect::<Vec<_>>();
+
+                            let transformed_body = match arrow_fn.clone().body {
+                                BlockStmtOrExpr::BlockStmt(block_stmt) => block_stmt,
+                                BlockStmtOrExpr::Expr(expr) => BlockStmt {
+                                    span: DUMMY_SP,
+                                    stmts: vec![Stmt::Expr(ExprStmt {
+                                        span: DUMMY_SP,
+                                        expr: expr,
+                                    })],
+                                },
+                            };
+
+                            Expr::Fn(FnExpr {
+                                ident: Some(fn_ident.clone()),
+                                function: Function {
+                                    params: transformed_params,
+                                    decorators: vec![],
+                                    span: DUMMY_SP,
+                                    body: Some(transformed_body),
+                                    is_generator: arrow_fn.is_generator,
+                                    is_async: arrow_fn.is_async,
+                                    type_params: arrow_fn.type_params.clone(),
+                                    return_type: arrow_fn.return_type.clone(),
+                                },
+                            })
+                        }
+                        _ => cx_process_element(*e),
+                    };
+
                     return cx_property(attr.name, Box::from(processed));
                 }
             },
