@@ -36,7 +36,7 @@ fn get_prop_name(kv_prop: &KeyValueProp) -> String {
 fn cx_process_element(expr: Expr) -> Expr {
     return match expr {
         Expr::JSXElement(el) => {
-            let mut children: Vec<JSXElementChild> = el.children.clone();
+            let children: Vec<JSXElementChild> = el.children.clone();
             let opening: JSXOpeningElement = el.opening.clone();
             let closing: Option<JSXClosingElement> = el.closing.clone();
 
@@ -82,17 +82,18 @@ fn cx_process_element(expr: Expr) -> Expr {
 
                 if tag_name == "Cx" {
                     let mut attrs: Vec<JSXAttrOrSpread> = opening.attrs;
+                    if !children.is_empty() {
+                        let items_container = JSXExprContainer {
+                            span: DUMMY_SP,
+                            expr: JSXExpr::Expr(Box::from(transformed_children_array_expr)),
+                        };
 
-                    let items_container = JSXExprContainer {
-                        span: DUMMY_SP,
-                        expr: JSXExpr::Expr(Box::from(transformed_children_array_expr)),
-                    };
-
-                    let items_attr = create_jsx_attribute(
-                        "items",
-                        Option::from(JSXAttrValue::JSXExprContainer(items_container)),
-                    );
-                    attrs.push(JSXAttrOrSpread::JSXAttr(items_attr));
+                        let items_attr = create_jsx_attribute(
+                            "items",
+                            Option::from(JSXAttrValue::JSXExprContainer(items_container)),
+                        );
+                        attrs.push(JSXAttrOrSpread::JSXAttr(items_attr));
+                    }
 
                     let element = JSXElement {
                         span: DUMMY_SP,
