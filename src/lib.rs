@@ -1,12 +1,12 @@
 use std::borrow::Borrow;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::ptr::null;
 use std::vec;
 
 use regex::Regex;
 use serde::Serialize;
-use swc_common::chain;
-use swc_common::{util::take::Take, DUMMY_SP};
+use swc_common::{chain, hygiene::Mark, util::take::Take, DUMMY_SP};
 use swc_core::testing_transform::test_fixture;
 use swc_core::visit::Fold;
 use swc_core::{
@@ -18,6 +18,7 @@ use swc_core::{
 };
 use swc_core::{ast::*, common::EqIgnoreSpan};
 use swc_ecma_parser::{EsConfig, Syntax};
+use swc_ecma_transforms_base::resolver;
 
 fn transform_cx_element(el: Box<JSXElement>) -> Expr {
     cx_process_element(Expr::JSXElement(el))
@@ -578,10 +579,6 @@ fn cx_bind_expr_tpl_object(instr: &str, value: Box<Expr>) -> Expr {
 }
 
 impl VisitMut for TransformVisitor {
-    // fn visit_mut_jsx_element_children(&mut self, children: &mut Vec<JSXElementChild>) {
-
-    // }
-
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
         expr.visit_mut_children_with(self);
 
@@ -595,29 +592,28 @@ impl VisitMut for TransformVisitor {
             _ => {}
         }
     }
+
+    // fn visit_mut_import_decl(&mut self, import_decl: &mut ImportDecl) {
+    //     let existing_imports = import_decl.specifiers.clone();
+    //     existing_imports.iter().for_each(|&i| match i {
+    //         ImportSpecifier::Named(named_import) => {
+    //             let import = named_import.local.sym.to_string();
+    //         }
+    //         _ => {}
+    //     })
+    // }
 }
 
-pub struct TransformVisitor;
+pub struct TransformVisitor {
+    imports: HashSet<String>,
+}
 
 #[plugin_transform]
 pub fn process_transform(program: Program, _metadata: TransformPluginProgramMetadata) -> Program {
-    let program = program.fold_with(&mut as_folder(TransformVisitor));
+    let program = program.fold_with(&mut as_folder(TransformVisitor {
+        imports: HashSet::new(),
+    }));
     program
-}
-
-// pub fn transform_cx(options: CxOptions) {
-//     let mut folder = CxImports { options };
-
-//     folder
-// }
-
-#[derive(Clone, Copy)]
-pub struct CxOptions {
-    trimWhitespace: bool,
-}
-
-struct CxImports {
-    options: CxOptions,
 }
 
 fn obj_key_identifier(name: &str) -> (Option<Str>, Option<Ident>) {
@@ -709,7 +705,16 @@ fn exec(input: PathBuf) {
             jsx: true,
             ..Default::default()
         }),
-        &|_| chain!(as_folder(TransformVisitor), as_folder(TransformVisitor)), // This works but i do not know how and why
+        &|_| {
+            chain!(
+                as_folder(TransformVisitor {
+                    imports: HashSet::new()
+                }),
+                as_folder(TransformVisitor {
+                    imports: HashSet::new()
+                })
+            )
+        }, // This works but i do not know how and why
         &input,
         &output,
     )
