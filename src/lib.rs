@@ -528,7 +528,7 @@ fn cx_property(name: JSXAttrName, value: Box<Expr>) -> Prop {
             }
 
             return Prop::KeyValue(KeyValueProp {
-                key: PropName::Ident(ident),
+                key: PropName::Str(symbol.into()),
                 value: value,
             });
         }

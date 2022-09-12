@@ -1,6 +1,6 @@
 ({
     "$type": Component,
-    onClick: function onClick(e) {},
+    "onClick": function onClick(e) {},
     "jsxAttributes": [
         "onClick"
     ]

@@ -1,6 +1,6 @@
 ({
     "$type": Component, 
-    value: {
+    "value": {
         "x": 1
     }, 
     "jsxAttributes": [
