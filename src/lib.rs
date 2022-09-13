@@ -604,6 +604,52 @@ impl TransformVisitor {
 
 impl VisitMut for TransformVisitor {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        match expr.borrow() {
+            Expr::Arrow(arrow_fn_expr) => match arrow_fn_expr.body.borrow() {
+                BlockStmtOrExpr::Expr(body_expr) => match body_expr.borrow() {
+                    Expr::Paren(paren_expr) => match *paren_expr.expr.clone() {
+                        Expr::JSXElement(jsx_el) => {
+                            println!("Arrow");
+                            let tag_name = element_name(*jsx_el.clone());
+                            if tag_name == "cx" {
+                                let mut old_expr = arrow_fn_expr.clone();
+                                old_expr.body = BlockStmtOrExpr::Expr(Box::new(
+                                    self.transform_cx_element(jsx_el),
+                                ));
+                                *expr = Expr::Call(CallExpr {
+                                    span: DUMMY_SP,
+                                    callee: Callee::Expr(Box::new(Expr::Ident(Ident {
+                                        span: DUMMY_SP,
+                                        sym: "createFunctionalComponent".into(),
+                                        optional: false,
+                                    }))),
+                                    args: vec![ExprOrSpread {
+                                        expr: Box::new(Expr::Arrow(old_expr)),
+                                        spread: None,
+                                    }],
+                                    type_args: None,
+                                });
+
+                                if self.imports.contains_key("cx/ui") {
+                                    self.imports
+                                        .get_mut("cx/ui")
+                                        .unwrap()
+                                        .insert("createFunctionalComponent".into());
+                                } else {
+                                    let mut import_set: HashSet<String> = HashSet::new();
+                                    import_set.insert("createFunctionalComponent".into());
+                                    self.imports.insert("cx/ui".into(), import_set);
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                },
+                _ => {}
+            },
+            _ => {}
+        }
         expr.visit_mut_children_with(self);
 
         match expr.borrow() {
