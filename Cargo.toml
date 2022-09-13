@@ -2,6 +2,7 @@
 name = "swc-transform-cx-jsx"
 version = "0.1.0"
 edition = "2021"
+repository = "https://github.com/gygasync/swc-transform-cx-jsx"
 
 [lib]
 crate-type = ["cdylib"]
