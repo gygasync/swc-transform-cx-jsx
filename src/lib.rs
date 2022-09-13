@@ -215,7 +215,8 @@ impl TransformVisitor {
                     attributes.iter().for_each(|a| match a {
                         JSXAttrOrSpread::SpreadElement(spread_el) => {
                             spread.push(Some(ExprOrSpread {
-                                spread: Some(spread_el.dot3_token),
+                                // spread: Some(spread_el.dot3_token),
+                                spread: None,
                                 expr: Box::new(self.cx_process_element(*spread_el.expr.clone())),
                             }));
                         }
