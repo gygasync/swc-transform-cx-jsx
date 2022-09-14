@@ -331,6 +331,9 @@ impl TransformVisitor {
                                 value: Box::new(value),
                             }))))
                         }
+                        Prop::Getter(getter) => attrs.push(o.clone()),
+                        Prop::Setter(setter) => attrs.push(o.clone()),
+                        Prop::Shorthand(_) => attrs.push(o.clone()),
                         _ => todo!("Only keyvalue is implemented for obj props"),
                     },
                     PropOrSpread::Spread(spread) => {}
@@ -609,7 +612,6 @@ impl VisitMut for TransformVisitor {
                 BlockStmtOrExpr::Expr(body_expr) => match body_expr.borrow() {
                     Expr::Paren(paren_expr) => match *paren_expr.expr.clone() {
                         Expr::JSXElement(jsx_el) => {
-                            println!("Arrow");
                             let tag_name = element_name(*jsx_el.clone());
                             if tag_name == "cx" {
                                 let mut old_expr = arrow_fn_expr.clone();
@@ -689,6 +691,10 @@ impl VisitMut for TransformVisitor {
     }
 
     fn visit_mut_module(&mut self, module: &mut Module) {
+        lazy_static::lazy_static! {
+            static ref IMPORT_REGEX: Regex = Regex::new(r"^cx").unwrap();
+        }
+
         module.visit_mut_children_with(self);
 
         let existing_imports = module
@@ -727,6 +733,12 @@ impl VisitMut for TransformVisitor {
             .imports
             .iter_mut()
             .map(|i| {
+                // let source = if i.0.contains("cx/src") {
+                //     i.0.clone()
+                // } else {
+                //     IMPORT_REGEX.replace(i.0, "cx/src").into_owned()
+                // };
+                // println!("{}",source);
                 ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
                     span: DUMMY_SP,
                     specifiers: i
@@ -745,7 +757,7 @@ impl VisitMut for TransformVisitor {
                             })
                         })
                         .collect::<Vec<_>>(),
-                    src: Str::from(i.0.to_string()),
+                    src: Str::from(i.0.clone()),
                     type_only: false,
                     asserts: None,
                 }))
