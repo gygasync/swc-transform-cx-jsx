@@ -21,6 +21,17 @@ opt-level = "s"
 # Strip debug symbols
 strip = "symbols"
 
+[dependencies]
+serde = "1"
+swc_core = { version = "0.29.*", features = ["plugin_transform"] }
+swc_ecma_parser = "0.122.24"
+testing = "0.31.13"
+
+# .cargo/config defines few alias to build plugin.
+# cargo build-wasi generates wasm-wasi32 binary
+# cargo build-wasm32 generates wasm32-unknown-unknown binary.
+
+
 
 # .cargo/config defines few alias to build plugin.
 # cargo build-wasi generates wasm-wasi32 binary
