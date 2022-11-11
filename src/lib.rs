@@ -249,6 +249,16 @@ impl TransformVisitor {
                     });
                 }
 
+                if !spread.is_empty() {
+                    attrs.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                        key: PropName::Str("jsxSpread".into()),
+                        value: Box::new(Expr::Array(ArrayLit {
+                            span: DUMMY_SP,
+                            elems: spread,
+                        })),
+                    }))));
+                }
+
                 if !attr_names.is_empty() {
                     attrs.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
                         key: PropName::Str("jsxAttributes".into()),
