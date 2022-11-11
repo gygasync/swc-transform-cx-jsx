@@ -1,16 +1,17 @@
 use std::borrow::BorrowMut;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use lazy_static::lazy_static;
 use regex::Regex;
 use swc_core::common::{Mark, DUMMY_SP};
 use swc_core::ecma::ast::{
-    ArrayLit, Expr, ExprOrSpread, Ident, JSXAttr, JSXAttrName, JSXAttrOrSpread, JSXAttrValue,
-    JSXClosingElement, JSXElement, JSXElementChild, JSXElementName, JSXExpr, JSXExprContainer,
-    JSXOpeningElement, JSXText, KeyValueProp, Lit, Null, ObjectLit, Prop, PropName, PropOrSpread,
-    Str,
+    ArrayLit, BlockStmt, BlockStmtOrExpr, CallExpr, Expr, ExprOrSpread, ExprStmt, FnExpr, Function,
+    Ident, ImportDecl, ImportNamedSpecifier, ImportSpecifier, JSXAttr, JSXAttrName,
+    JSXAttrOrSpread, JSXAttrValue, JSXClosingElement, JSXElement, JSXElementChild, JSXElementName,
+    JSXExpr, JSXExprContainer, JSXOpeningElement, JSXText, KeyValueProp, Lit, Module, ModuleDecl,
+    ModuleItem, Null, ObjectLit, Param, Prop, PropName, PropOrSpread, Stmt, Str,
 };
-use swc_core::ecma::atoms::Atom;
 use swc_core::ecma::transforms::base::resolver;
 use swc_core::plugin::{plugin_transform, proxies::TransformPluginProgramMetadata};
 use swc_core::{
@@ -23,7 +24,9 @@ use swc_core::{
 };
 use swc_ecma_parser::{EsConfig, Syntax};
 
-pub struct TransformVisitor;
+pub struct TransformVisitor {
+    imports: HashMap<String, HashSet<String>>,
+}
 
 fn create_key_value_prop(key: String, value: Box<Expr>) -> PropOrSpread {
     PropOrSpread::Prop(Box::from(Prop::KeyValue(KeyValueProp {
@@ -63,9 +66,16 @@ impl TransformVisitor {
                 let opening: JSXOpeningElement = jsx_el.opening.clone();
                 let closing: &mut Option<JSXClosingElement> = &mut jsx_el.closing;
 
+                let ws_flag = opening.attrs.iter().any(|a| match a {
+                    JSXAttrOrSpread::JSXAttr(jsx_attr) => match &jsx_attr.name {
+                        JSXAttrName::Ident(ident) => ident.sym.to_string() == "ws",
+                        _ => false,
+                    },
+                    _ => false,
+                });
+
                 if let JSXElementName::Ident(ident) = &opening.name {
                     let tag_name: String = ident.sym.to_string();
-                    println!("TAG {}", tag_name);
                     if tag_name == "cx" || tag_name == "Cx" {
                         let mut transformed_children = children
                             .iter_mut()
@@ -73,7 +83,7 @@ impl TransformVisitor {
                                 JSXElementChild::JSXElement(..) => true,
                                 _ => false,
                             })
-                            .map(|child| self.transform_cx_child(child, false))
+                            .map(|child| self.transform_cx_child(child, ws_flag))
                             .filter(|child| child.is_some())
                             .map(|child| child.unwrap())
                             .collect::<Vec<_>>();
@@ -103,6 +113,47 @@ impl TransformVisitor {
                             span: DUMMY_SP,
                             elems: transformed_children_expr,
                         });
+
+                        if tag_name == "Cx" {
+                            let mut attrs: Vec<JSXAttrOrSpread> = opening.attrs;
+                            if !children.is_empty() {
+                                let items_container = JSXExprContainer {
+                                    span: DUMMY_SP,
+                                    expr: JSXExpr::Expr(Box::new(
+                                        transformed_children_array_expr.to_owned(),
+                                    )),
+                                };
+
+                                let ident = Ident {
+                                    span: DUMMY_SP,
+                                    sym: "items".into(),
+                                    optional: false,
+                                };
+
+                                let items_attr = JSXAttr {
+                                    span: DUMMY_SP,
+                                    name: JSXAttrName::Ident(ident),
+                                    value: Some(JSXAttrValue::JSXExprContainer(items_container)),
+                                };
+
+                                attrs.push(JSXAttrOrSpread::JSXAttr(items_attr))
+                            }
+
+                            let element = JSXElement {
+                                span: DUMMY_SP,
+                                opening: JSXOpeningElement {
+                                    name: opening.name,
+                                    span: DUMMY_SP,
+                                    attrs,
+                                    self_closing: opening.self_closing,
+                                    type_args: opening.type_args,
+                                },
+                                children: vec![],
+                                closing: closing.to_owned(),
+                            };
+
+                            return Expr::JSXElement(Box::new(element));
+                        }
 
                         return match (transformed_children.len()) {
                             0 => NULL_LIT_EXPR.to_owned(),
@@ -139,17 +190,36 @@ impl TransformVisitor {
                     if dot_index.is_some() {
                     } else if tag_first_char.to_lowercase() == tag_first_char {
                         // HtmlElement
-                    } else {
-                        let prop = create_key_value_prop(
+                        let html_element_sym = "HtmlElement";
+                        self.insert_import("cx/widgets", html_element_sym);
+                        let html_element = create_key_value_prop(
                             String::from("$type"),
                             Box::from(Expr::Ident(Ident {
                                 span: DUMMY_SP,
-                                sym: tag_name.into(),
+                                sym: html_element_sym.into(),
                                 optional: false,
                             })),
                         );
 
-                        attrs.push(prop);
+                        attrs.push(html_element);
+
+                        if let JSXElementName::Ident(ident) = opening.name {
+                            let tag = create_key_value_prop(
+                                String::from("tag"),
+                                Box::from(Expr::Lit(Lit::Str(tag_name.into()))),
+                            );
+
+                            attrs.push(tag);
+                        };
+                    } else {
+                        if let JSXElementName::Ident(ident) = opening.name {
+                            let prop = create_key_value_prop(
+                                String::from("$type"),
+                                Box::from(Expr::Ident(ident)),
+                            );
+
+                            attrs.push(prop);
+                        };
                     }
 
                     let mut attr_names: Vec<String> = vec![];
@@ -201,6 +271,49 @@ impl TransformVisitor {
 
                     if !children.is_empty() {
                         let mut new_children: Vec<JSXElementChild> = vec![];
+                        children.iter_mut().for_each(|child| {
+                            let processed = self.transform_cx_child(child, ws_flag);
+                            if processed.is_some() {
+                                new_children.push(processed.unwrap());
+                            }
+                        });
+
+                        attrs.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                            key: PropName::Str("children".into()),
+                            value: Box::new(Expr::Array(ArrayLit {
+                                span: DUMMY_SP,
+                                elems: new_children
+                                    .iter_mut()
+                                    .map(|child| {
+                                        Some(ExprOrSpread {
+                                            spread: None,
+                                            expr: Box::new(match child {
+                                                JSXElementChild::JSXText(jsx_text) => {
+                                                    Expr::Lit(jsx_text.value.to_owned().into())
+                                                }
+                                                JSXElementChild::JSXElement(jsx_el) => {
+                                                    Expr::JSXElement(jsx_el.to_owned())
+                                                }
+                                                JSXElementChild::JSXSpreadChild(spread) => {
+                                                    *spread.expr.to_owned()
+                                                }
+                                                JSXElementChild::JSXExprContainer(expr_cont) => {
+                                                    match &expr_cont.expr {
+                                                        JSXExpr::JSXEmptyExpr(_) => {
+                                                            NULL_LIT_EXPR.to_owned()
+                                                        }
+                                                        JSXExpr::Expr(expr) => *expr.to_owned(),
+                                                    }
+                                                }
+                                                JSXElementChild::JSXFragment(jsx_fragment) => {
+                                                    Expr::JSXFragment(jsx_fragment.to_owned())
+                                                }
+                                            }),
+                                        })
+                                    })
+                                    .collect::<Vec<_>>(),
+                            })),
+                        }))));
                     }
 
                     return Expr::Object(ObjectLit {
@@ -210,6 +323,54 @@ impl TransformVisitor {
                 }
 
                 expr.to_owned()
+            }
+            Expr::Array(array) => {
+                let mut elems: Vec<Option<ExprOrSpread>> = vec![];
+
+                array.elems.iter_mut().for_each(|el| match el {
+                    Some(expr_or_spread) => elems.push(Some(ExprOrSpread {
+                        spread: None,
+                        expr: Box::new(self.transform_cx_element(&mut *expr_or_spread.expr)),
+                    })),
+                    None => {}
+                });
+
+                return Expr::Array(ArrayLit {
+                    span: DUMMY_SP,
+                    elems,
+                });
+            }
+            Expr::Object(obj) => {
+                let mut attrs: Vec<PropOrSpread> = vec![];
+
+                obj.props
+                    .iter_mut()
+                    .for_each(|obj_props| match obj_props.to_owned() {
+                        PropOrSpread::Prop(prop) => match *prop {
+                            Prop::KeyValue(key_value) => {
+                                let prop_name = self.get_prop_name(&key_value);
+                                let value =
+                                    self.transform_cx_element(&mut key_value.to_owned().value);
+
+                                attrs.push(PropOrSpread::Prop(Box::new(Prop::KeyValue(
+                                    KeyValueProp {
+                                        key: PropName::Str(prop_name.into()),
+                                        value: Box::new(value),
+                                    },
+                                ))))
+                            }
+                            Prop::Getter(_) => attrs.push(obj_props.to_owned()),
+                            Prop::Setter(_) => attrs.push(obj_props.to_owned()),
+                            Prop::Shorthand(_) => attrs.push(obj_props.to_owned()),
+                            _ => todo!("EXPR OBJ PROPS"),
+                        },
+                        PropOrSpread::Spread(_) => {}
+                    });
+
+                return Expr::Object(ObjectLit {
+                    span: DUMMY_SP,
+                    props: attrs,
+                });
             }
             _ => expr.to_owned(),
         }
@@ -237,6 +398,59 @@ impl TransformVisitor {
 
                     self.generate_cx_property(attr.name, Box::new(processed))
                 }
+                JSXAttrValue::JSXExprContainer(jsx_expr_cont) => match &jsx_expr_cont.expr {
+                    JSXExpr::Expr(expr) => {
+                        let processed = match &mut *expr.to_owned() {
+                            Expr::Arrow(arrow_fn) => {
+                                let fn_ident = match &attr.name {
+                                    JSXAttrName::Ident(ident) => ident,
+                                    JSXAttrName::JSXNamespacedName(ns_name) => {
+                                        todo!("JSX NS NAME ARROW ATTRIBUTE")
+                                    }
+                                };
+
+                                let transformed_params = arrow_fn
+                                    .params
+                                    .iter_mut()
+                                    .map(|p| Param {
+                                        span: DUMMY_SP,
+                                        pat: p.to_owned(),
+                                        decorators: vec![],
+                                    })
+                                    .collect::<Vec<_>>();
+
+                                let transformed_body = match &arrow_fn.body {
+                                    BlockStmtOrExpr::BlockStmt(block_stmt) => block_stmt.to_owned(),
+                                    BlockStmtOrExpr::Expr(expr) => BlockStmt {
+                                        span: DUMMY_SP,
+                                        stmts: vec![Stmt::Expr(ExprStmt {
+                                            span: DUMMY_SP,
+                                            expr: expr.to_owned(),
+                                        })],
+                                    },
+                                };
+
+                                Expr::Fn(FnExpr {
+                                    ident: Some(fn_ident.to_owned()),
+                                    function: Box::new(Function {
+                                        params: transformed_params,
+                                        decorators: vec![],
+                                        span: DUMMY_SP,
+                                        body: Some(transformed_body),
+                                        is_generator: arrow_fn.is_generator,
+                                        is_async: arrow_fn.is_async,
+                                        type_params: arrow_fn.type_params.to_owned(),
+                                        return_type: arrow_fn.return_type.to_owned(),
+                                    }),
+                                })
+                            }
+                            _ => self.transform_cx_element(&mut expr.to_owned()),
+                        };
+
+                        return self.generate_cx_property(attr.name, Box::new(processed));
+                    }
+                    JSXExpr::JSXEmptyExpr(_) => todo!("EMPTY PROP EXPR"),
+                },
                 _ => self.generate_cx_property(attr.name, Box::new(NULL_LIT_EXPR.to_owned())),
             },
             None => {
@@ -347,18 +561,58 @@ impl TransformVisitor {
             _ => Some(child.to_owned()),
         }
     }
+
+    fn insert_import(&mut self, key: &str, value: &str) {
+        if self.imports.contains_key(key) {
+            self.imports.get_mut(key).unwrap().insert(value.into());
+        } else {
+            let mut import_set: HashSet<String> = HashSet::new();
+            import_set.insert(value.into());
+            self.imports.insert(key.into(), import_set);
+        }
+    }
 }
 
 impl VisitMut for TransformVisitor {
     fn visit_mut_expr(&mut self, expr: &mut Expr) {
+        if let Expr::Arrow(arrow_fn_expr) = expr {
+            if let BlockStmtOrExpr::Expr(body_expr) = &arrow_fn_expr.body {
+                if body_expr.is_paren() {
+                    let internal_expr = body_expr.to_owned().paren().unwrap().expr;
+                    if internal_expr.is_jsx_element() {
+                        let jsx_el = internal_expr.jsx_element().unwrap();
+                        if let JSXElementName::Ident(ident) = jsx_el.opening.name.to_owned() {
+                            let tag_name = ident.sym.to_string();
+                            if tag_name == "cx" || tag_name == "Cx" {
+                                let mut old_expr = arrow_fn_expr;
+                                old_expr.body = BlockStmtOrExpr::Expr(Box::new(
+                                    self.transform_cx_element(&mut Expr::JSXElement(jsx_el)),
+                                ));
+                                *expr = Expr::Call(CallExpr {
+                                    span: DUMMY_SP,
+                                    callee: swc_core::ecma::ast::Callee::Expr(Box::new(
+                                        Expr::Ident(Ident {
+                                            span: DUMMY_SP,
+                                            sym: "createFunctionalComponent".into(),
+                                            optional: false,
+                                        }),
+                                    )),
+                                    args: vec![ExprOrSpread {
+                                        expr: Box::new(Expr::Arrow(old_expr.to_owned())),
+                                        spread: None,
+                                    }],
+                                    type_args: None,
+                                });
+
+                                self.insert_import("cx/ui", "createFunctionalComponent");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         expr.visit_mut_children_with(self);
-
-        // match expr.borrow() {
-        //     Expr::JSXElement(jsx_el) => {
-
-        //     }
-        //     _ => {}
-        // }
 
         if let Expr::JSXElement(jsx_el) = expr {
             if let JSXElementName::Ident(ident) = &mut jsx_el.opening.name {
@@ -369,11 +623,110 @@ impl VisitMut for TransformVisitor {
             }
         }
     }
+
+    fn visit_mut_module(&mut self, module: &mut Module) {
+        module.visit_mut_children_with(self);
+
+        self.imports.iter_mut().for_each(|import| {
+            let new_item = ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
+                span: DUMMY_SP,
+                specifiers: import
+                    .1
+                    .iter()
+                    .map(|i| {
+                        ImportSpecifier::Named(ImportNamedSpecifier {
+                            span: DUMMY_SP,
+                            local: Ident {
+                                span: DUMMY_SP,
+                                sym: i.to_owned().into(),
+                                optional: false,
+                            },
+                            imported: None,
+                            is_type_only: false,
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+                src: Box::new(Str::from(import.0.to_owned())),
+                type_only: false,
+                asserts: None,
+            }));
+            module.body.push(new_item);
+        })
+        // module.body.push(value)
+
+        // module.body.iter_mut().for_each(|m| match m {
+        //     ModuleItem::ModuleDecl(module_decl) => match module_decl {
+        //         ModuleDecl::Import(import_decl) => {
+        //             import_decl.specifiers.iter_mut().for_each(|spec| {
+        //                 let key = import_decl.src.value.to_string();
+        //                 match spec {
+        //                     ImportSpecifier::Named(named_spec) => {
+        //                         let value = named_spec.local.sym.to_string();
+        //                         self.insert_import(key.as_str(), value.as_str());
+        //                     }
+        //                     _ => {}
+        //                 };
+        //                 // self.insert_import(, value)
+        //             });
+
+        //         }
+        //         _ => {}
+        //     },
+        //     _ => {}
+        // });
+
+        // let unchanged_module_items = module
+        //     .body
+        //     .iter()
+        //     .filter(|m| match m {
+        //         ModuleItem::ModuleDecl(module_decl) => match module_decl {
+        //             ModuleDecl::Import(_) => false,
+        //             _ => true,
+        //         },
+        //         _ => true,
+        //     })
+        //     .map(|i| i.to_owned())
+        //     .collect::<Vec<_>>();
+
+        // let mut new_imports = self
+        //     .imports
+        //     .iter_mut()
+        //     .map(|i| {
+        //         ModuleItem::ModuleDecl(ModuleDecl::Import(ImportDecl {
+        //             span: DUMMY_SP,
+        //             specifiers: i
+        //                 .1
+        //                 .iter()
+        //                 .map(|s| {
+        //                     ImportSpecifier::Named(ImportNamedSpecifier {
+        //                         span: DUMMY_SP,
+        //                         local: Ident {
+        //                             span: DUMMY_SP,
+        //                             optional: false,
+        //                             sym: s.to_owned().into(),
+        //                         },
+        //                         imported: None,
+        //                         is_type_only: false,
+        //                     })
+        //                 })
+        //                 .collect::<Vec<_>>(),
+        //             src: Box::new(Str::from(i.0.to_owned())),
+        //             type_only: false,
+        //             asserts: None,
+        //         }))
+        //     })
+        //     .collect::<Vec<_>>();
+
+        // new_imports.extend(unchanged_module_items);
+        // module.body = new_imports;
+    }
 }
 
 #[plugin_transform]
 pub fn process_transform(program: Program, _metadata: TransformPluginProgramMetadata) -> Program {
-    program.fold_with(&mut as_folder(TransformVisitor))
+    program.fold_with(&mut as_folder(TransformVisitor {
+        imports: HashMap::new(),
+    }))
 }
 
 #[testing::fixture("tests/**/input.js")]
@@ -387,7 +740,9 @@ fn exec(input: PathBuf) {
         &|_| {
             chain!(
                 resolver(Mark::new(), Mark::new(), true),
-                as_folder(TransformVisitor {})
+                as_folder(TransformVisitor {
+                    imports: HashMap::new()
+                })
             )
         }, // This works but i do not know how and why
         &input,

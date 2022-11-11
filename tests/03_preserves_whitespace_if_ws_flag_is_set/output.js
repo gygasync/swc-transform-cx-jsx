@@ -1,11 +1,15 @@
 ({
-  $type: Container,
-  children: [
-    {
-      $type: Container,
-      children: ["\n                Text\n            "],
-      jsxAttributes: ["ws"],
-      ws: true,
-    },
-  ],
+    "$type": Container,
+    "children": [
+        {
+            "$type": Container,
+            "ws": true,
+            "jsxAttributes": [
+              "ws"
+            ],
+            "children": [
+                "\n\r\n      Text\n\r\n    "
+            ],
+        },
+    ],
 });
