@@ -438,54 +438,7 @@ impl TransformVisitor {
                 }
                 JSXAttrValue::JSXExprContainer(jsx_expr_cont) => match &jsx_expr_cont.expr {
                     JSXExpr::Expr(expr) => {
-                        let processed = match &mut *expr.to_owned() {
-                            Expr::Arrow(arrow_fn) => {
-                                let fn_ident = match &attr.name {
-                                    JSXAttrName::Ident(ident) => ident,
-                                    JSXAttrName::JSXNamespacedName(ns_name) => {
-                                        println!("JSX NS NAME ARROW ATTRIBUTE");
-                                        todo!("JSX NS NAME ARROW ATTRIBUTE")
-                                    }
-                                };
-
-                                let transformed_params = arrow_fn
-                                    .params
-                                    .iter_mut()
-                                    .map(|p| Param {
-                                        span: DUMMY_SP,
-                                        pat: p.to_owned(),
-                                        decorators: vec![],
-                                    })
-                                    .collect::<Vec<_>>();
-
-                                let transformed_body = match &arrow_fn.body {
-                                    BlockStmtOrExpr::BlockStmt(block_stmt) => block_stmt.to_owned(),
-                                    BlockStmtOrExpr::Expr(expr) => BlockStmt {
-                                        span: DUMMY_SP,
-                                        stmts: vec![Stmt::Expr(ExprStmt {
-                                            span: DUMMY_SP,
-                                            expr: expr.to_owned(),
-                                        })],
-                                    },
-                                };
-
-                                Expr::Fn(FnExpr {
-                                    ident: Some(fn_ident.to_owned()),
-                                    function: Box::new(Function {
-                                        params: transformed_params,
-                                        decorators: vec![],
-                                        span: DUMMY_SP,
-                                        body: Some(transformed_body),
-                                        is_generator: arrow_fn.is_generator,
-                                        is_async: arrow_fn.is_async,
-                                        type_params: arrow_fn.type_params.to_owned(),
-                                        return_type: arrow_fn.return_type.to_owned(),
-                                    }),
-                                })
-                            }
-                            _ => self.transform_cx_element(&mut expr.to_owned()),
-                        };
-
+                        let processed = self.transform_cx_element(&mut expr.to_owned());
                         return self.generate_cx_property(attr.name, Box::new(processed));
                     }
                     JSXExpr::JSXEmptyExpr(_) => {
