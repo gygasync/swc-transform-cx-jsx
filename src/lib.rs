@@ -108,7 +108,10 @@ impl TransformVisitor {
                                         JSXExpr::JSXEmptyExpr(_) => NULL_LIT_EXPR.to_owned(),
                                     }))
                                 }
-                                _ => panic!("Error creating Cx react element"),
+                                _ => {
+                                    println!("Error creating Cx react element");
+                                    panic!("Error creating Cx react element")
+                                }
                             })
                             .collect::<Vec<_>>();
 
@@ -179,7 +182,10 @@ impl TransformVisitor {
                                             JSXExpr::JSXEmptyExpr(_) => NULL_LIT_EXPR.to_owned(),
                                         }
                                     }
-                                    _ => panic!("Failed transforming only child."),
+                                    _ => {
+                                        println!("Failed transforming only child");
+                                        panic!("Failed transforming only child.")
+                                    }
                                 };
                             }
                             _ => transformed_children_array_expr,
@@ -241,7 +247,10 @@ impl TransformVisitor {
                             attrs.push(PropOrSpread::Prop(Box::new(processed.to_owned())));
                             let attr_name = match processed {
                                 Prop::KeyValue(kv) => self.get_prop_name(&kv),
-                                _ => panic!("cannot parse attr_names Prop"),
+                                _ => {
+                                    println!("cannot parse attr_names Prop");
+                                    panic!("cannot parse attr_names Prop")
+                                }
                             };
 
                             attr_names.push(attr_name);
@@ -384,7 +393,11 @@ impl TransformVisitor {
                             Prop::Getter(_) => attrs.push(obj_props.to_owned()),
                             Prop::Setter(_) => attrs.push(obj_props.to_owned()),
                             Prop::Shorthand(_) => attrs.push(obj_props.to_owned()),
-                            _ => todo!("EXPR OBJ PROPS"),
+                            Prop::Method(method) => attrs.push(obj_props.to_owned()),
+                            _ => {
+                                println!("EXPR OBJ PROPS");
+                                todo!("EXPR OBJ PROPS")
+                            }
                         },
                         PropOrSpread::Spread(_) => {}
                     });
@@ -404,7 +417,10 @@ impl TransformVisitor {
             PropName::Str(str) => str.value.to_string(),
             PropName::Num(num) => num.value.to_string(),
             PropName::BigInt(big_int) => big_int.value.to_string(),
-            _ => panic!("cannot parse attr_names prop keyValue"),
+            _ => {
+                println!("cannot parse attr_names prop keyValue");
+                panic!("cannot parse attr_names prop keyValue")
+            }
         }
     }
 
@@ -427,6 +443,7 @@ impl TransformVisitor {
                                 let fn_ident = match &attr.name {
                                     JSXAttrName::Ident(ident) => ident,
                                     JSXAttrName::JSXNamespacedName(ns_name) => {
+                                        println!("JSX NS NAME ARROW ATTRIBUTE");
                                         todo!("JSX NS NAME ARROW ATTRIBUTE")
                                     }
                                 };
@@ -471,7 +488,10 @@ impl TransformVisitor {
 
                         return self.generate_cx_property(attr.name, Box::new(processed));
                     }
-                    JSXExpr::JSXEmptyExpr(_) => todo!("EMPTY PROP EXPR"),
+                    JSXExpr::JSXEmptyExpr(_) => {
+                        println!("EMPTY PROP EXPR");
+                        todo!("EMPTY PROP EXPR")
+                    }
                 },
                 _ => self.generate_cx_property(attr.name, Box::new(NULL_LIT_EXPR.to_owned())),
             },
@@ -746,6 +766,7 @@ impl VisitMut for TransformVisitor {
 
 #[plugin_transform]
 pub fn process_transform(program: Program, _metadata: TransformPluginProgramMetadata) -> Program {
+    std::env::set_var("RUST_BACKTRACE", "1");
     program.fold_with(&mut as_folder(TransformVisitor {
         imports: HashMap::new(),
     }))
